@@ -11,7 +11,7 @@ A Rust/Tauri host for the pinned upstream Hermes Webapp renderer. This is an exp
 ## Checks (repository root)
 - `cargo test --locked --no-default-features`: CLI/policy without GTK.
 - `cargo fmt --all -- --check`; `cargo clippy --locked --all-targets -- -D warnings`.
-- `cargo test --locked`: includes actual Linux WebKit behavior. Linux additionally needs Node 24+, Xvfb, xdotool, D-Bus, and openbox (existing kwin_x11 also supported). The test owns a separate display, bus and home.
+- `cargo test --locked`: includes actual Linux WebKit behavior. Linux additionally needs Node 26, Xvfb, xdotool, D-Bus, and openbox (existing kwin_x11 also supported). The test owns a separate display, bus and home.
 - `npm test`; `python3 -m unittest discover -s tests -p 'test_*.py' -v`.
 - `node scripts/build-renderer.mjs --test`: affected upstream suites, then renderer build. `cargo build --locked` builds the host.
 

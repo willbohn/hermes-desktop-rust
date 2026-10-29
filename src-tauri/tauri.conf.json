@@ -14,6 +14,7 @@
   },
   "bundle": {
     "active": true,
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "targets": ["deb", "rpm", "appimage", "dmg", "nsis"],
     "category": "DeveloperTool",
     "shortDescription": "Rust host for Hermes Desktop",

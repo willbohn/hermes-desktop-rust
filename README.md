@@ -19,7 +19,7 @@ See [architecture](docs/architecture.md), [community reports](docs/community-fee
 
 ## Build and run
 
-Requirements: current stable Rust, Git, Node.js 24, and a compatible installed Hermes CLI. Native prerequisites follow [Tauri's platform guide](https://v2.tauri.app/start/prerequisites/): Linux needs GTK3 and WebKitGTK 4.1 development libraries; Windows needs the MSVC toolchain and WebView2; macOS needs Xcode command-line tools.
+Requirements: current stable Rust, Git, Node.js 26, and a compatible installed Hermes CLI. Native prerequisites follow [Tauri's platform guide](https://v2.tauri.app/start/prerequisites/): Linux needs GTK3 and WebKitGTK 4.1 development libraries; Windows needs the MSVC toolchain and WebView2; macOS needs Xcode command-line tools.
 
 ```sh
 git clone --recurse-submodules --branch feat/rust-desktop https://github.com/willbohn/hermes-desktop-rust.git
