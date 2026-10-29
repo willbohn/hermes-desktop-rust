@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-options"
+description = "Enables the launch_options command without any pre-configured scope."
+commands.allow = ["launch_options"]
+
+[[permission]]
+identifier = "deny-launch-options"
+description = "Denies the launch_options command without any pre-configured scope."
+commands.deny = ["launch_options"]

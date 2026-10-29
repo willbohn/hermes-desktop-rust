@@ -1,0 +1,9 @@
+Hermes Desktop Rust is an independent experimental host by William Bohn and contributors.
+It is not an official Nous Research release and has no upstream acceptance or endorsement.
+
+The upstream/hermes-agent submodule and the renderer built from it are Hermes Agent,
+Copyright (c) 2025 Nous Research, licensed under the MIT License in that directory.
+All upstream authorship and notices remain intact. The project's own Rust host is MIT licensed.
+
+Initial development was AI-assisted using Hermes Agent. Automated review and test results
+must not be interpreted as a claim that a human has reviewed every change.

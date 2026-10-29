@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Hermes Desktop Rust",
+  "version": "0.1.0",
+  "identifier": "com.willbohn.hermes-desktop-rust",
+  "build": {"frontendDist": "../ui"},
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "capabilities": ["launcher"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "dmg", "nsis"],
+    "category": "DeveloperTool",
+    "shortDescription": "Rust host for Hermes Desktop",
+    "copyright": "Copyright (c) 2026 William Bohn; upstream workspace © Nous Research",
+    "linux": {"deb": {"depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]}},
+    "macOS": {"minimumSystemVersion": "12.0"}
+  }
+}
