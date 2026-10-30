@@ -12,6 +12,10 @@ export async function targets(base = 'http://127.0.0.1:19222') {
   return [...loaded.matchAll(/\/socket\/(\d+)\/(\d+)\/WebPage/g)].map(match => `${base.replace('http', 'ws')}${match[0]}`);
 }
 
+export class InspectorDisconnectedError extends Error {
+  constructor(message = 'Inspector disconnected') { super(message); this.name = 'InspectorDisconnectedError'; }
+}
+
 // Discovery revisits pages. Retain their exclusive connections instead of racing backend detach.
 export function createInspectorSession() {
   const pages = new Map();
@@ -21,6 +25,19 @@ export function createInspectorSession() {
       if (closed) return Promise.reject(new Error('Inspector session closed'));
       if (!pages.has(target)) pages.set(target, inspect(target));
       return pages.get(target);
+    },
+    async find(base, accepts, snapshot) {
+      for (const target of snapshot ?? await targets(base)) {
+        try {
+          const client = await this.inspect(target);
+          if (await accepts(client)) return { client, target };
+        } catch (error) {
+          // Only read-only discovery may skip a target confirmed retired after its snapshot.
+          // Keep real probe/transport failures fatal; never reconnect or replay an action.
+          if (!(error instanceof InspectorDisconnectedError) || (await targets(base)).includes(target)) throw error;
+        }
+      }
+      return null;
     },
     async close() {
       closed = true;
@@ -36,11 +53,22 @@ export async function inspect(target) {
   let sequence = 0;
   const waiting = new Map();
   let acceptTarget;
+  let rejectTarget;
+  let disconnected;
   const ready = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('No inspectable WebKit target')), 10000);
     acceptTarget = id => { clearTimeout(timer); resolve(id); };
-    socket.onerror = () => { clearTimeout(timer); reject(new Error('Inspector connection failed')); };
+    rejectTarget = error => { clearTimeout(timer); reject(error); };
   });
+  const disconnect = message => {
+    if (disconnected) return;
+    disconnected = new InspectorDisconnectedError(message);
+    rejectTarget(disconnected);
+    for (const { timer, reject } of waiting.values()) { clearTimeout(timer); reject(disconnected); }
+    waiting.clear();
+  };
+  socket.addEventListener('close', () => disconnect());
+  socket.onerror = () => disconnect('Inspector connection failed');
   socket.onmessage = event => {
     let response = JSON.parse(event.data);
     if (response.method === 'Target.targetCreated') { acceptTarget(response.params.targetInfo.targetId); return; }
@@ -54,6 +82,7 @@ export async function inspect(target) {
   };
   const targetId = await ready;
   const call = (method, params = {}) => new Promise((resolve, reject) => {
+    if (disconnected) { reject(disconnected); return; }
     const id = ++sequence;
     const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Inspector timeout: ${method}`)); }, 15000);
     waiting.set(id, { resolve, reject, timer });

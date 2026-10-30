@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createInspectorSession, targets } from './webkit-inspector.mjs';
+import { visibleWindows } from './x11-windows.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const binary = resolve(process.argv[2] ?? join(root, 'target/debug/hermes-desktop-rust'));
@@ -127,8 +128,7 @@ async function until(label, condition, timeout = 10000) {
 }
 const xdo = (...args) => execFileSync('xdotool', args, { encoding: 'utf8', timeout: 5000 }).trim();
 function windowNamed(name) {
-  try { return xdo('search', '--onlyvisible', '--name', name).split('\n').at(-1); }
-  catch (error) { if (error.status === 1) return null; throw error; }
+  return visibleWindows(name).at(-1) ?? null;
 }
 function key(window, keys) {
   lastInput = { window, keys };
@@ -208,15 +208,11 @@ try {
     if (child.exitCode !== null) throw new Error(`Native host exited: ${child.exitCode}`);
     let pages;
     try { pages = await targets(inspector); } catch { return false; }
-    for (const target of pages) {
-      const candidate = await inspection.inspect(target);
-      if (await candidate.evaluate(`location.origin === ${JSON.stringify(origin)}`)) {
-        page = candidate;
-        pageAddress = target;
-        return true;
-      }
-    }
-    return false;
+    const found = await inspection.find(inspector, client => client.evaluate(`location.origin === ${JSON.stringify(origin)}`), pages);
+    if (!found) return false;
+    page = found.client;
+    pageAddress = found.target;
+    return true;
   });
   assert.equal(await page.evaluate(`(async () => {
     if (!window.__TAURI_INTERNALS__?.invoke) return 'not exposed';
@@ -293,15 +289,11 @@ try {
   async function findLauncher() {
     let found;
     await until('bundled launcher ready', async () => {
-      for (const address of await targets(inspector)) {
-        const client = await inspection.inspect(address);
-        if (await client.evaluate("typeof document !== 'undefined' && document.readyState === 'complete' && Boolean(document.querySelector('#remote-form'))")) {
-          found = {client, address};
-          launcher = client;
-          return true;
-        }
-      }
-      return false;
+      const match = await inspection.find(inspector, client => client.evaluate("typeof document !== 'undefined' && document.readyState === 'complete' && Boolean(document.querySelector('#remote-form'))"));
+      if (!match) return false;
+      found = { client: match.client, address: match.target };
+      launcher = match.client;
+      return true;
     });
     return found;
   }
@@ -334,7 +326,7 @@ try {
 
   // Use the ordinary bundled connection form to open a fresh origin, not a native grant backdoor.
   page = null; // The inspection session retains existing page connections until teardown.
-  await findLauncher();
+  const recoveredLauncher = await findLauncher();
   await launcher.evaluate(`
     window.fixtureLauncherEvents=[];
     for (const name of ['keydown','click','submit','focusin']) document.addEventListener(name,event=>{
@@ -346,17 +338,19 @@ try {
     document.querySelector('#remote-form button').focus();
     fixtureLauncherBefore.buttonFocused=document.activeElement===document.querySelector('#remote-form button');
     fixtureLauncherBefore.buttonDisabled=document.querySelector('#remote-form button').disabled; true`);
+  // Force discovery to see a stale snapshot, not merely hope window retirement races a poll.
+  let discoverySnapshot = await targets(inspector);
+  assert.ok(discoverySnapshot.includes(recoveredLauncher.address));
   key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
+  await until('submitted launcher retires', async () => !(await targets(inspector)).includes(recoveredLauncher.address));
   await until('second notification workspace', async () => {
-    for (const target of await targets(inspector)) {
-      const candidate = await inspection.inspect(target);
-      if (await candidate.evaluate(`location.origin === ${JSON.stringify(alternateOrigin)}`)) {
-        page = candidate;
-        pageAddress = target;
-        return true;
-      }
-    }
-    return false;
+    const pages = discoverySnapshot ?? await targets(inspector);
+    discoverySnapshot = null;
+    const found = await inspection.find(inspector, client => client.evaluate(`location.origin === ${JSON.stringify(alternateOrigin)}`), pages);
+    if (!found) return false;
+    page = found.client;
+    pageAddress = found.target;
+    return true;
   });
   checks.push('first native key after dismissing a busy launcher submits the recovered connection form');
   const notificationWindow = windowNamed('Hermes Desktop Rust');
@@ -536,24 +530,20 @@ try {
     await until('launcher available for media peer', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
     await findLauncher();
     const before = new Set(await targets(inspector));
-    const beforeWindows = new Set(xdo('search', '--onlyvisible', '--name', 'Hermes Desktop Rust').split('\n'));
+    const beforeWindows = new Set(visibleWindows('Hermes Desktop Rust'));
     await launcher.evaluate(`document.querySelector('#remote-details').open=true; document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
     key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
     let client;
     await until('same-origin media peer loaded', async () => {
-      for (const address of await targets(inspector)) {
-        if (before.has(address)) continue;
-        const candidate = await inspection.inspect(address);
-        if (await candidate.evaluate(`location.origin===${JSON.stringify(alternateOrigin)} && Boolean(document.querySelector('#microphone'))`)) {
-          client = candidate;
-          return true;
-        }
-      }
-      return false;
+      const candidates = (await targets(inspector)).filter(address => !before.has(address));
+      const found = await inspection.find(inspector, candidate => candidate.evaluate(`location.origin===${JSON.stringify(alternateOrigin)} && Boolean(document.querySelector('#microphone'))`), candidates);
+      if (!found) return false;
+      client = found.client;
+      return true;
     });
     let window;
     await until('media peer native window visible', () => {
-      window = xdo('search', '--onlyvisible', '--name', 'Hermes Desktop Rust').split('\n').find(id => !beforeWindows.has(id));
+      window = visibleWindows('Hermes Desktop Rust').find(id => !beforeWindows.has(id));
       return Boolean(window);
     });
     return {client, window};
@@ -613,9 +603,18 @@ try {
     assert.ok(windowNamed('Hermes Desktop Rust.*Connect'), 'a popup must not dismiss another launch’s connection form');
   }
   assert.equal(await openPopup(), false, 'ninth workspace refused with launcher present');
-  key(windowNamed('Hermes Desktop Rust.*Connect'), 'ctrl+w');
-  await until('launcher retired before second limit probe', async () =>
-    !windowNamed('Hermes Desktop Rust.*Connect') && (await targets(inspector)).length === 8);
+  // Exercise native menu cleanup across GTK widget-address reuse, not only one fresh window.
+  for (let cycle = 0; cycle < 8; cycle++) {
+    if (cycle > 0) {
+      key(reopened.window, 'ctrl+shift+o');
+      await until('recreated launcher visible', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+      await findLauncher();
+    }
+    key(windowNamed('Hermes Desktop Rust.*Connect'), 'ctrl+w');
+    await until(`launcher retired by native menu in cycle ${cycle}`, async () =>
+      !windowNamed('Hermes Desktop Rust.*Connect') && (await targets(inspector)).length === 8);
+  }
+  checks.push('native menu shortcuts survive repeated launcher retirement');
   assert.equal(await openPopup(), false, 'ninth workspace refused without a launcher');
   checks.push('eight-workspace bound excludes auxiliary views; popups do not dismiss the launcher');
 
@@ -650,7 +649,7 @@ try {
   console.error('Isolated native diagnostics:', nativeDiagnostics);
   await mkdir(join(root, 'artifacts'), { recursive: true });
   try { execFileSync('import', ['-window', 'root', join(root, 'artifacts/native-test-failure.png')], { timeout: 5000 }); } catch {}
-  try { console.error('Visible test windows:', xdo('search', '--onlyvisible', '--name', '.')); } catch {}
+  try { console.error('Visible test windows:', visibleWindows('.')); } catch {}
   throw error;
 } finally {
   await stopReplacementFixture();

@@ -226,7 +226,7 @@ fn show_launcher(app: &tauri::AppHandle) -> Result<(), &'static str> {
             if let Err(error) =
                 notifications::install_denied(&launcher).and_then(|()| media::install(&launcher))
             {
-                let _ = launcher.destroy();
+                let _ = launcher.close();
                 return Err(error);
             }
             launcher
@@ -288,6 +288,13 @@ pub fn run() -> Result<(), &'static str> {
             Ok(())
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "linux")]
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                // Muda 0.20 caches GTK menus by widget address; Tauri 2.12 does not detach them
+                // on destruction. Release the entry while this window is still accessible,
+                // before GTK can reuse its address. This host has no close-veto listeners.
+                let _ = window.remove_menu();
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let app = window.app_handle();
                 let remaining = app.webview_windows();

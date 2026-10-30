@@ -19,6 +19,7 @@ function controlledSocket(t) {
   globalThis.WebSocket = class extends EventTarget {
     static CLOSED = 3;
     readyState = 1;
+    sent = [];
     closeStarted = Promise.withResolvers();
     constructor() {
       super();
@@ -28,6 +29,7 @@ function controlledSocket(t) {
       }) }));
     }
     close() { this.readyState = 2; this.closeStarted.resolve(); }
+    send(message) { this.sent.push(JSON.parse(message)); }
     finishClose() { this.readyState = 3; this.dispatchEvent(new Event('close')); }
   };
   t.after(() => { sockets.forEach(socket => socket.finishClose()); globalThis.WebSocket = original; });
@@ -44,6 +46,20 @@ test('closing waits for the transport to release the exclusive inspector connect
   sockets[0].finishClose();
   await closing;
   assert.equal(finished, true);
+});
+
+test('a disconnected target rejects pending and future calls without waiting for a timeout', async t => {
+  const sockets = controlledSocket(t);
+  const page = await webkit.inspect('ws://retiring-page');
+  t.after(() => page.close());
+  let failure;
+  const pending = page.call('Runtime.evaluate', { expression: 'true' }).catch(error => { failure = error; });
+  sockets[0].finishClose();
+  await Promise.resolve();
+  assert.equal(failure?.message, 'Inspector disconnected');
+  await pending;
+  await assert.rejects(page.evaluate('true'), { message: 'Inspector disconnected' });
+  assert.equal(sockets[0].sent.length, 1, 'a closed transport must not receive another request');
 });
 
 test('a session retains one connection per target until all owned transports close', async t => {
@@ -65,4 +81,29 @@ test('a session retains one connection per target until all owned transports clo
   await closing;
   assert.equal(finished, true);
   assert.equal(sockets.length, 2, 'teardown must not create another connection');
+});
+
+test('discovery skips only confirmed retired connections without reconnecting', async t => {
+  const sockets = controlledSocket(t);
+  const session = webkit.createInspectorSession();
+  t.after(() => session.close());
+  const base = 'http://inspector.test';
+  const retired = 'ws://inspector.test/socket/1/1/WebPage';
+  const live = 'ws://inspector.test/socket/1/2/WebPage';
+  const snapshot = [retired, live];
+  await session.inspect(retired);
+  const liveClient = await session.inspect(live);
+  sockets[0].finishClose();
+  let current = [live];
+  t.mock.method(globalThis, 'fetch', async () => new Response(current.map(url => new URL(url).pathname).join('\n')));
+  const probe = client => client === liveClient ? true : client.evaluate('true');
+  assert.deepEqual(await session.find(base, probe, snapshot), { client: liveClient, target: live });
+  assert.equal(sockets.length, 2, 'retirement must not trigger a second attachment');
+
+  current = snapshot;
+  await assert.rejects(session.find(base, probe, snapshot), webkit.InspectorDisconnectedError,
+    'losing a still-advertised target is a failure, not a discovery retry');
+  current = [];
+  await assert.rejects(session.find(base, () => { throw new Error('probe failed'); }, [live]), /probe failed/,
+    'an unrelated probe failure must propagate even if the target later disappears');
 });

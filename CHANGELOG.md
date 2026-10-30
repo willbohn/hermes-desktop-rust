@@ -23,10 +23,12 @@
 - Recover the first native key after dismissing a busy connection launcher. Retire the old webview instead of retaining GTK WebKit's stale key-replay state; recreate it through the same guarded builder.
 - Keep Linux's shared-context download policy alive independently of connection/workspace windows, without granting the blank policy owner native IPC or page-navigation authority.
 - Count only workspaces toward the eight-window bound. A popup or later page reload no longer dismisses an unrelated connection form.
+- Detach Linux menus before window destruction so reused GTK widget addresses do not lose native menus and shortcuts.
 
 ### Changed
 
 - Connection forms restart from CLI defaults after dismissal, rather than preserving unsaved edits in a hidden webview. Startup auto-connect is consumed once, not repeated on recovery.
 - The native regression forces a delayed keyboard reply across dismissal and checks real first-key submission. Inspector discovery skips unloaded blank contexts; temporary GTK input tracing is removed.
+- Test discovery rejects disconnected inspector calls promptly and skips only confirmed retired targets. Invalidated X11 tree reads cannot be mistaken for an absent consent dialog; input actions and failed tests are never replayed.
 
 Full Electron-native feature parity, signed installers, automatic updates, cross-platform runtime validation and upstream acceptance remain unverified or unimplemented. See `docs/compatibility.md`.

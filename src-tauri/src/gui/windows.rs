@@ -90,7 +90,7 @@ pub fn open_workspace(
                 && let Some(launcher) = &launcher
             {
                 // Retire only this launch's owner, never a later launcher or a popup's bystander.
-                let _ = launcher.destroy();
+                let _ = launcher.close();
             }
         })
         .on_new_window(move |url, features| {

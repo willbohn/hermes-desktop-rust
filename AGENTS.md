@@ -21,4 +21,5 @@ A Rust/Tauri host for the pinned upstream Hermes Webapp renderer. This is an exp
 - Launch tickets stay inside Rust/the target webview, never launcher JS, titles, Debug, logs or screenshots. Never expose raw child output as errors.
 - Every webview installs the download policy, including the launcher: WebKit context handlers are shared. Folder consent is native, per app session, and revocable for new transfers. Preserve engine authentication/blob transfers; never re-fetch them in another browser.
 - Keep `app.windows` empty; only the guarded Rust builders create views. Revoke must invalidate pending picker callbacks as well as clear folder permission. The real native test uses a valid OS default download directory to catch permissive-context regressions.
+- Retire views through `close()`, not direct `destroy()`: Linux detaches Muda menus before GTK can reuse a window address. This host has no close-veto listeners; adding one requires preserving the menu on cancellation.
 - No retry-masked tests or source-string tests in place of behavior. CI compilation is not native macOS/Windows verification; automated review is not human review.

@@ -38,6 +38,8 @@ flowchart LR
 
 Connection windows are retired on dismissal and recreated through the guarded builder. GTK3 WebKit can leave an unhandled-key replay flag set when a web-process reply arrives after its window hides; reusing that view can discard the next real key. No dummy input, timed recovery or page keyboard suppression is used. Automatic connection runs only once; recovered forms use CLI defaults, not unsaved edits. A workspace's first completed load retires only the launcher handle that initiated it; popups and later reloads cannot dismiss a newer form.
 
+Retirement uses normal close requests. On Linux the host detaches the window menu before GTK destroys its widget, because Muda 0.20 caches menu bars by widget address and Tauri 2.12 does not remove that entry on destruction. A recycled address otherwise receives no native menu or shortcuts. The host currently has no close-veto listeners; any future cancellable-close flow must retain or restore the menu on cancellation.
+
 On Linux, a first-created, hidden `about:blank` view owns the shared download callback for the app lifetime. Wry's context callback survives its originating view, while Tauri refuses it once that view's label is gone. The blank owner prevents that stale callback from cancelling transfers in surviving workspaces. It has no content or native IPC authority, denies navigation away from `about:blank`, receives media/notification denials, and does not count as a user window. All user views still install the same download policy. This does not change engine cookies, authentication or blob ownership.
 
 ## Why not port every Electron IPC handler now?

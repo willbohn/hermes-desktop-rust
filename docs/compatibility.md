@@ -29,6 +29,8 @@ Baseline: `f2cc013158ce4b89f50154c09486a885835133b9` (2026-10-29). **Reuse is no
 
 Linux download policy currently depends on the first-registered `decide-destination` handler winning in Wry 0.57.1 / Tauri 2.12.5. A first-created, blank, unprivileged context owner keeps that handler valid after user windows close. This is a library implementation dependency, not a promised public API: recheck ordering and run the native refusal/authenticated/blob/close-then-download scenarios when upgrading Wry, Tauri or WebKitGTK. Current Linux evidence covers WebKitGTK 2.54.2 and Ubuntu 24.04's 2.52.6, not every engine release.
 
+Native Linux menu cleanup also compensates for Tauri 2.12.5 / Muda 0.20.0 retaining a menu cache entry keyed by a destroyed GTK widget's address. Normal close requests detach it while the widget is still accessible. Recheck repeated close/recreation shortcuts on dependency upgrades; a visible web page is not proof its native menu exists.
+
 ## Known gaps — do not call this full Desktop parity
 
 | Feature | Current disposition |
