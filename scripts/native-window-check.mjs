@@ -135,6 +135,17 @@ function key(window, keys) {
   xdo('windowfocus', '--sync', window);
   xdo('key', '--clearmodifiers', keys);
 }
+async function stopReplacementFixture() {
+  if (!replacementFixture || replacementFixture.exitCode !== null || replacementFixture.signalCode !== null) return;
+  const exited = new Promise(resolve => replacementFixture.once('exit', resolve));
+  replacementFixture.kill('SIGTERM');
+  await Promise.race([exited, delay(3000, undefined, { ref: false })]);
+  if (replacementFixture.exitCode === null && replacementFixture.signalCode === null) {
+    replacementFixture.kill('SIGKILL');
+    await Promise.race([exited, delay(3000, undefined, { ref: false })]);
+    assert.ok(replacementFixture.exitCode !== null || replacementFixture.signalCode !== null, 'replacement fixture must be reaped');
+  }
+}
 async function assertCaptureRefused(client, label, expression, allowed = ['NotAllowedError']) {
   const started = await client.call('Runtime.evaluate', {
     expression: `window.fixtureCaptureStatus='pending'; (async()=>{try {
@@ -188,7 +199,7 @@ try {
       WEBKIT_INSPECTOR_SERVER: `127.0.0.1:${socketPort}`,
     },
   });
-  child.stderr.on('data', bytes => { nativeDiagnostics = (nativeDiagnostics + bytes.toString()).slice(-8000); });
+  child.stderr.on('data', bytes => { nativeDiagnostics = (nativeDiagnostics + bytes.toString()).slice(-64000); });
   await until('private notification service', async () => {
     try { return Boolean(JSON.parse(await readFile(join(temporary, 'notification-ready.json'), 'utf8')).address); }
     catch (error) { if (error.code === 'ENOENT') return false; throw error; }
@@ -397,7 +408,7 @@ try {
       NOTIFICATION_FIXTURE_START_ID: String(oldNotes[0].id),
     },
   });
-  replacementFixture.stderr.on('data', bytes => { nativeDiagnostics = (nativeDiagnostics + bytes.toString()).slice(-8000); });
+  replacementFixture.stderr.on('data', bytes => { nativeDiagnostics = (nativeDiagnostics + bytes.toString()).slice(-64000); });
   let replacement;
   await until('replacement daemon owns the name', async () => {
     if (replacementFixture.exitCode !== null) throw new Error(`Replacement fixture exited: ${replacementFixture.exitCode}`);
@@ -551,11 +562,12 @@ try {
   await until('reopened workspace has no inherited grant', () => reopened.client.evaluate("window.fixtureMicState==='NotAllowedError'"));
   checks.push('closing an active microphone workspace discards its grant; a fresh window requires consent');
 
+  // Reap the externally attached fixture before Quit tears down its private D-Bus.
+  await stopReplacementFixture();
   key(workspace, 'ctrl+q');
   await until('explicit quit exits the host', () => child.exitCode !== null);
   assert.equal(child.exitCode, 0);
   checks.push('explicit quit exits cleanly');
-  console.log(JSON.stringify({ passed: checks.length, checks }));
 } catch (error) {
   console.error(error.message);
   try { console.error('Native input target:', { ...lastInput, focused: xdo('getwindowfocus'), active: xdo('getactivewindow') }); }
@@ -575,11 +587,7 @@ try {
   try { console.error('Visible test windows:', xdo('search', '--onlyvisible', '--name', '.')); } catch {}
   throw error;
 } finally {
-  if (replacementFixture && replacementFixture.exitCode === null && replacementFixture.signalCode === null) {
-    replacementFixture.kill('SIGTERM');
-    await Promise.race([new Promise(resolve => replacementFixture.once('exit', resolve)), delay(3000)]);
-    if (replacementFixture.exitCode === null && replacementFixture.signalCode === null) replacementFixture.kill('SIGKILL');
-  }
+  await stopReplacementFixture();
   if (child?.pid) {
     // This process group contains only the test host/webviews; --url never invokes Hermes.
     // Reap ancillary fixture processes even after the native Quit action exits the host.
@@ -594,4 +602,9 @@ try {
   await new Promise(resolve => alternateFixture.close(resolve));
   await rm(temporary, { recursive: true, force: true });
   await inspection.close();
+  await mkdir(join(root, 'artifacts'), { recursive: true });
+  await writeFile(join(root, 'artifacts/native-input-trace.log'),
+    nativeDiagnostics.split('\n').filter(line => line.startsWith('TEST GTK ')).join('\n'));
 }
+assert.doesNotMatch(nativeDiagnostics, /panicked at|panic in a function/, 'native fixture teardown must not panic');
+console.log(JSON.stringify({ passed: checks.length, checks }));

@@ -23,6 +23,50 @@ fn view_origin(view: &WebView) -> Option<String> {
     origin(&Url::parse(view.uri()?.as_str()).ok()?)
 }
 
+// Temporary native-fixture diagnostics: log routing/state, never key values, titles or URIs.
+fn trace_input(view: &WebView, label: &str) {
+    fn trace_widget(widget: &glib::Object, label: &str, role: &str) {
+        let prefix = format!("TEST GTK {label} {role}");
+        eprintln!("{prefix} type={}", widget.type_().name());
+        for property in ["has-focus", "is-focus", "is-active", "has-toplevel-focus"] {
+            if widget.find_property(property).is_some() {
+                let prefix = prefix.clone();
+                widget.connect_notify_local(Some(property), move |widget, _| {
+                    eprintln!("{prefix} {property}={}", widget.property::<bool>(property));
+                });
+            }
+        }
+        widget.connect_local("key-press-event", false, move |values| {
+            if let Ok(widget) = values[0].get::<glib::Object>() {
+                eprintln!(
+                    "{prefix} key-press has-focus={} is-focus={}",
+                    widget.property::<bool>("has-focus"),
+                    widget.property::<bool>("is-focus")
+                );
+            }
+            Some(false.to_value())
+        });
+    }
+    trace_widget(view.upcast_ref(), label, "view");
+    let mut root = view.clone().upcast::<glib::Object>();
+    while let Some(parent) = root.property::<Option<glib::Object>>("parent") {
+        root = parent;
+    }
+    trace_widget(&root, label, "root");
+    if root.find_property("is-active").is_some() {
+        let label = label.to_owned();
+        root.connect_local("set-focus", false, move |values| {
+            let kind = match values[1].get::<Option<glib::Object>>() {
+                Ok(Some(widget)) => widget.type_().name().to_owned(),
+                Ok(None) => "none".to_owned(),
+                Err(_) => "unavailable".to_owned(),
+            };
+            eprintln!("TEST GTK {label} focused-widget={kind}");
+            None
+        });
+    }
+}
+
 /// Ask once for this window and document. Only a Boolean crosses the dialog callback; the
 /// non-`Send` WebKit request object stays on GTK's main thread inside `spawn_local`.
 fn decide(
@@ -82,6 +126,9 @@ pub(crate) fn install(window: &WebviewWindow) -> Result<(), &'static str> {
     window
         .with_webview(move |platform| {
             let view = platform.inner();
+            if mock {
+                trace_input(&view, target.label());
+            }
             let configured = view.settings().is_some_and(|settings| {
                 settings.set_enable_mock_capture_devices(mock);
                 settings.set_enable_media_stream(true);

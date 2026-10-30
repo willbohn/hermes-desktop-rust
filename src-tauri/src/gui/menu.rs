@@ -122,8 +122,6 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
                 if let Some(window) = app.get_webview_window("launcher") {
                     let _ = window.show();
                     let _ = window.set_focus();
-                    // Window focus alone does not focus the embedded webview for keyboard input.
-                    let _ = window.as_ref().set_focus();
                 }
             }
             "downloads" => windows::choose_download_folder(app),
