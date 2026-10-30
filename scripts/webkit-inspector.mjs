@@ -1,6 +1,7 @@
 // Test-only client for the system WebKit inspector. No npm dependencies.
 // Enable WEBKIT_INSPECTOR_HTTP_SERVER only on loopback in an isolated smoke run.
 import { writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
 
 export async function targets(base = 'http://127.0.0.1:19222') {
   const html = await (await fetch(base)).text();
@@ -53,10 +54,14 @@ export async function inspect(target) {
       const image = await call('Page.snapshotRect', { x: 0, y: 0, ...metrics, coordinateSystem: 'Viewport' });
       await writeFile(path, Buffer.from(image.dataURL.split(',')[1], 'base64'));
     },
-    close() {
+    async close() {
       for (const { timer, reject } of waiting.values()) { clearTimeout(timer); reject(new Error('Inspector closed')); }
       waiting.clear();
+      if (socket.readyState === WebSocket.CLOSED) return;
+      // A target permits only one client: release it before the caller reconnects.
+      const closed = once(socket, 'close', { signal: AbortSignal.timeout(5000) });
       socket.close();
+      await closed;
     },
   };
 }

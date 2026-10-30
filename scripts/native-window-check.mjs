@@ -148,7 +148,7 @@ try {
         page = candidate;
         return true;
       }
-      candidate.close();
+      await candidate.close();
     }
     return false;
   });
@@ -232,7 +232,7 @@ try {
   checks.push('closing the connection launcher does not strand active workspaces');
 
   // Use the ordinary bundled connection form to open a fresh origin, not a native grant backdoor.
-  page.close();
+  await page.close();
   page = null; // WebKit permits only one inspector connection per target.
   let launcher;
   for (const target of await targets(inspector)) {
@@ -241,12 +241,12 @@ try {
       launcher = candidate;
       break;
     }
-    candidate.close();
+    await candidate.close();
   }
   assert.ok(launcher);
   await launcher.evaluate(`document.querySelector('#remote-details').open=true; document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
   key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
-  launcher.close();
+  await launcher.close();
   await until('second notification workspace', async () => {
     for (const target of await targets(inspector)) {
       const candidate = await inspect(target);
@@ -254,7 +254,7 @@ try {
         page = candidate;
         return true;
       }
-      candidate.close();
+      await candidate.close();
     }
     return false;
   });
@@ -398,6 +398,7 @@ try {
   console.log(JSON.stringify({ passed: checks.length, checks }));
 } catch (error) {
   console.error(error.message);
+  console.error('Completed native checks:', checks);
   console.error('Downloads in isolated folder:', await readdir(downloadDir));
   console.error('Isolated native diagnostics:', nativeDiagnostics);
   await mkdir(join(root, 'artifacts'), { recursive: true });
@@ -405,7 +406,6 @@ try {
   try { console.error('Visible test windows:', xdo('search', '--onlyvisible', '--name', '.')); } catch {}
   throw error;
 } finally {
-  page?.close();
   if (replacementFixture && replacementFixture.exitCode === null && replacementFixture.signalCode === null) {
     replacementFixture.kill('SIGTERM');
     await Promise.race([new Promise(resolve => replacementFixture.once('exit', resolve)), delay(3000)]);
@@ -424,4 +424,5 @@ try {
   await new Promise(resolve => fixture.close(resolve));
   await new Promise(resolve => alternateFixture.close(resolve));
   await rm(temporary, { recursive: true, force: true });
+  await page?.close();
 }
