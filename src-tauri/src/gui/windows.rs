@@ -37,7 +37,7 @@ pub fn open_workspace(
     let download_app = app.clone();
     let zoom_app = app.clone();
     // Popups use the engine's handoff. Linux also secures a blank top-level view before
-    // navigating: untrusted content must not race installation of native notification handlers.
+    // navigating: untrusted content must not race installation of native permission handlers.
     let is_popup = features.is_some();
     let initial = match is_popup || cfg!(target_os = "linux") {
         true => WebviewUrl::External(Url::parse("about:blank").expect("about:blank is a URL")),
@@ -87,7 +87,9 @@ pub fn open_workspace(
         .map_err(|_| "The system webview could not create a window")?;
     #[cfg(target_os = "linux")]
     {
-        if let Err(error) = super::notifications::install(&window) {
+        if let Err(error) =
+            super::notifications::install(&window).and_then(|()| super::media::install(&window))
+        {
             let _ = window.close();
             return Err(error);
         }

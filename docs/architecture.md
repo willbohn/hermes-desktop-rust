@@ -60,6 +60,17 @@ flowchart LR
 
 The guard is installed before webviews; shared-bus loss fails closed. Every page still receives its native permission/delivery handlers, with explicit denial on the launcher. No workspace IPC or browser-permission polyfill is added. This is an engine-integration boundary, not a sandbox against other processes under the same OS user. [Native evidence and limitations](notification-verification.md) describe the dependency on WebKit's shared GIO backend.
 
+## Linux microphone boundary
+
+```mermaid
+flowchart LR
+  P[Page and embedded content] -->|WebKit media request| C[Native microphone-only consent]
+  C -->|current document and window only| E[Engine-owned grant and capture]
+  W[Close workspace] -->|destroy page and its grant| E
+```
+
+The existing browser media API stays intact. Rust checks the request and asks for native consent; WebKit retains the grant for subsequent capture in that workspace. Closing the workspace is the revocation boundary because an idle cached grant cannot be reliably reset through the available safe API. No recording IPC, second permission registry or codec shim is added. [Media verification](media-verification.md) separates synthetic engine coverage from physical audio and provider testing.
+
 ## Upstream route
 
 Discuss a native-host migration with maintainers before proposing it as a replacement. Small accessibility fixes can be reviewed independently. This standalone repository preserves upstream attribution and avoids assuming that an independent product belongs in the core tree. No endorsement or likelihood-of-acceptance claim is made.

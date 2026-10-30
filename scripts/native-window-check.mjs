@@ -22,6 +22,7 @@ const downloadDir = join(temporary, 'approved-downloads');
 let child;
 let replacementFixture;
 let page;
+let pageAddress;
 let downloads = 0;
 let popups = 0;
 let nativeDiagnostics = '';
@@ -63,7 +64,41 @@ const fixtureHandler = (request, response) => {
       <a id="popup" href="/popup" target="_blank">Open fixture popup</a>
       <script type="module">import { downloadBlob } from '/download-helper.js'; window.fixtureDownloadBlob = downloadBlob;</script>
       <button id="blob" onclick="fixtureDownloadBlob(new Blob(['BLOB_FIXTURE_BYTES'],{type:'application/octet-stream'}),'blob-proof.txt')">Export blob</button>
-      <button id="notification-permission" onclick="window.fixturePermission='pending'; window.fixturePermissions=[]; Notification.requestPermission().then(value => {window.fixturePermissions[0]=value; window.fixturePermission=value})">Request notification permission</button>`);
+      <button id="notification-permission" onclick="window.fixturePermission='pending'; window.fixturePermissions=[]; Notification.requestPermission().then(value => {window.fixturePermissions[0]=value; window.fixturePermission=value})">Request notification permission</button>
+      <button id="microphone" onclick="recordFixtureMicrophone()">Record synthetic microphone</button>
+      <script>
+      window.fixtureMicState='idle';
+      async function recordFixtureMicrophone() {
+        window.fixtureMicState='pending';
+        let stream;
+        try {
+          // Match upstream's permission probe followed by a separate recording acquisition.
+          const probe=await navigator.mediaDevices.getUserMedia({audio:true});
+          const labels=probe.getAudioTracks().map(track=>track.label);
+          probe.getTracks().forEach(track=>track.stop());
+          window.fixtureRetainedGum=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+          stream=await fixtureRetainedGum({audio:true});
+          const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus','audio/ogg','audio/wav'].find(type=>MediaRecorder.isTypeSupported(type));
+          const recorder=new MediaRecorder(stream,mime ? {mimeType:mime} : undefined);
+          const chunks=[];
+          const bytes=await new Promise((resolve,reject)=>{
+            recorder.ondataavailable=event=>{
+              if (event.data.size) {
+                chunks.push(event.data);
+                if (recorder.state==='recording') recorder.stop();
+              }
+            };
+            recorder.onstop=()=>resolve(new Blob(chunks).size);
+            recorder.onerror=event=>reject(event.error);
+            recorder.start(100);
+          });
+          stream.getTracks().forEach(track=>track.stop());
+          window.fixtureMicResult={labels,bytes,mime:recorder.mimeType,states:stream.getTracks().map(track=>track.readyState)};
+          window.fixtureMicState='encoded';
+        } catch(error) { window.fixtureMicState=error.name; }
+        finally { stream?.getTracks().forEach(track=>track.stop()); }
+      }
+      </script>`);
   }
 };
 const fixture = createServer(fixtureHandler);
@@ -97,6 +132,21 @@ function key(window, keys) {
   xdo('windowfocus', '--sync', window);
   xdo('key', '--clearmodifiers', keys);
 }
+async function assertCaptureRefused(client, label, expression, allowed = ['NotAllowedError']) {
+  const started = await client.call('Runtime.evaluate', {
+    expression: `window.fixtureCaptureStatus='pending'; (async()=>{try {
+      if (!navigator.mediaDevices) return 'unavailable';
+      const stream=await (${expression}); stream.getTracks().forEach(track=>track.stop()); return 'ALLOWED';
+    } catch(error) {return error.name;}})().then(result=>{window.fixtureCaptureStatus=result}); true`,
+    emulateUserGesture: true,
+  });
+  assert.notEqual(started.wasThrown, true, `${label}: fixture must execute`);
+  await until(label, async () => {
+    assert.equal(Boolean(windowNamed('Allow microphone access')), false, `${label}: no microphone prompt may authorize this request`);
+    return await client.evaluate('window.fixtureCaptureStatus') !== 'pending';
+  });
+  assert.ok(allowed.includes(await client.evaluate('window.fixtureCaptureStatus')), `${label}: capture must be refused`);
+}
 try {
   await mkdir(downloadDir);
   for (const folder of ['home', 'config', 'data', 'cache', 'state', 'runtime']) {
@@ -121,7 +171,7 @@ try {
     try { execFileSync('which', [command], { stdio: 'ignore' }); return true; } catch { return false; }
   });
   assert.ok(windowManager, 'Install openbox for the isolated native test');
-  child = spawn('dbus-run-session', ['--', 'sh', '-c', '"$1" >/dev/null 2>&1 & "$2" --exact notification_service_fixture --ignored --nocapture >&2 & shift 2; exec "$@"', 'native-check', windowManager, fixtureBinary, binary, '--url', origin], {
+  child = spawn('dbus-run-session', ['--', 'sh', '-c', '"$1" >/dev/null 2>&1 & "$2" --exact notification_service_fixture --ignored --nocapture >&2 & shift 2; exec "$@"', 'native-check', windowManager, fixtureBinary, binary, '--url', origin, '--test-mock-media'], {
     cwd: temporary, detached: true, stdio: ['ignore', 'ignore', 'pipe'],
     env: {
       PATH: process.env.PATH, DISPLAY: process.env.DISPLAY, XAUTHORITY: process.env.XAUTHORITY, LANG: 'C.UTF-8',
@@ -129,6 +179,7 @@ try {
       XDG_CONFIG_HOME: join(temporary, 'config'), XDG_DATA_HOME: join(temporary, 'data'),
       XDG_CACHE_HOME: join(temporary, 'cache'), XDG_STATE_HOME: join(temporary, 'state'),
       XDG_RUNTIME_DIR: join(temporary, 'runtime'),
+      PULSE_SERVER: `unix:${join(temporary, 'no-pulse')}`, PIPEWIRE_REMOTE: join(temporary, 'no-pipewire'),
       NOTIFICATION_FIXTURE_DIR: temporary,
       WEBKIT_INSPECTOR_HTTP_SERVER: `127.0.0.1:${inspectorPort}`,
       WEBKIT_INSPECTOR_SERVER: `127.0.0.1:${socketPort}`,
@@ -147,6 +198,7 @@ try {
       const candidate = await inspection.inspect(target);
       if (await candidate.evaluate(`location.origin === ${JSON.stringify(origin)}`)) {
         page = candidate;
+        pageAddress = target;
         return true;
       }
     }
@@ -249,6 +301,7 @@ try {
       const candidate = await inspection.inspect(target);
       if (await candidate.evaluate(`location.origin === ${JSON.stringify(alternateOrigin)}`)) {
         page = candidate;
+        pageAddress = target;
         return true;
       }
     }
@@ -386,6 +439,105 @@ try {
   assert.equal(workerResult.fromWorker.result, 'resolved', workerResult.fromWorker.reason);
   assert.equal((await notificationEvents()).some(event => ['SERVICE_WORKER_MUST_NOT_DELIVER', 'WORKER_SELF_MUST_NOT_DELIVER'].includes(event.title)), false, `service-worker delivery bypassed consent (${JSON.stringify(workerResult)})`);
   checks.push(`worker notifications cannot bypass stopped delivery; worker messaging works (${JSON.stringify(workerResult)})`);
+
+  await page.evaluate("document.querySelector('#microphone').focus(); true");
+  key(notificationWindow, 'Return');
+  await until('microphone request waits for native consent', async () => {
+    const state = await page.evaluate('window.fixtureMicState');
+    if (state === 'idle') return false;
+    assert.equal(state, 'pending', 'capture must await consent, not silently allow or refuse');
+    return Boolean(windowNamed('Allow microphone access'));
+  });
+  const microphoneDialog = windowNamed('Allow microphone access');
+  key(microphoneDialog, 'Return');
+  await until('microphone decision dialog closes', () => windowNamed('Allow microphone access') !== microphoneDialog);
+  await until('synthetic audio is encoded after probe and reacquisition', async () => {
+    assert.equal(Boolean(windowNamed('Allow microphone access')), false, 'the permission probe must not cause a duplicate prompt for recording');
+    const state = await page.evaluate('window.fixtureMicState');
+    assert.ok(['pending', 'encoded'].includes(state), `microphone capture failed: ${state}`);
+    return state === 'encoded';
+  });
+  const recorded = await page.evaluate('window.fixtureMicResult');
+  assert.deepEqual(recorded.labels, ['Mock audio device 1'], 'only synthetic devices may be used');
+  assert.ok(recorded.bytes > 0, 'MediaRecorder must produce actual encoded bytes');
+  assert.deepEqual(recorded.states, ['ended']);
+  checks.push(`native microphone consent preserves probe/reacquire and real encoding (${recorded.mime}, ${recorded.bytes} bytes from a mock device)`);
+  assert.deepEqual(await page.evaluate(`(async()=>{
+    window.fixtureLiveMicrophone=await fixtureRetainedGum({audio:true});
+    return fixtureLiveMicrophone.getTracks().map(track=>({label:track.label,state:track.readyState}));
+  })()`), [{label:'Mock audio device 1',state:'live'}]);
+
+  for (const [label, expression] of [
+    ['camera-only refused', 'navigator.mediaDevices.getUserMedia({video:true})'],
+    ['combined microphone/camera refused', 'navigator.mediaDevices.getUserMedia({audio:true,video:true})'],
+    ['screen with audio refused', 'navigator.mediaDevices.getDisplayMedia({audio:true,video:true})'],
+  ]) await assertCaptureRefused(page, label, expression);
+  checks.push('microphone consent cannot authorize camera, mixed camera/audio or screen capture');
+  key(notificationWindow, 'ctrl+shift+o');
+  await until('launcher visible for media refusal', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+  await assertCaptureRefused(launcher, 'launcher microphone refused', 'navigator.mediaDevices.getUserMedia({audio:true})', ['NotAllowedError', 'unavailable']);
+  checks.push('launcher cannot acquire microphone access');
+
+  async function openMediaPeer() {
+    key(workspace, 'ctrl+shift+o');
+    await until('launcher available for media peer', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+    const before = new Set(await targets(inspector));
+    const beforeWindows = new Set(xdo('search', '--onlyvisible', '--name', 'Hermes Desktop Rust').split('\n'));
+    await launcher.evaluate(`document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
+    key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
+    let client;
+    await until('same-origin media peer loaded', async () => {
+      for (const address of await targets(inspector)) {
+        if (before.has(address)) continue;
+        const candidate = await inspection.inspect(address);
+        if (await candidate.evaluate(`location.origin===${JSON.stringify(alternateOrigin)} && Boolean(document.querySelector('#microphone'))`)) {
+          client = candidate;
+          return true;
+        }
+      }
+      return false;
+    });
+    let window;
+    await until('media peer native window visible', () => {
+      window = xdo('search', '--onlyvisible', '--name', 'Hermes Desktop Rust').split('\n').find(id => !beforeWindows.has(id));
+      return Boolean(window);
+    });
+    return {client, window};
+  }
+  async function requestPeerMicrophone(peer) {
+    await peer.client.evaluate("document.querySelector('#microphone').focus(); true");
+    key(peer.window, 'Return');
+    await until('peer must ask for its own microphone consent', async () => {
+      const state = await peer.client.evaluate('window.fixtureMicState');
+      if (state === 'idle') return false;
+      assert.equal(state, 'pending', 'another window must not inherit microphone consent');
+      return Boolean(windowNamed('Allow microphone access'));
+    });
+    return windowNamed('Allow microphone access');
+  }
+  const peer = await openMediaPeer();
+  const staleDialog = await requestPeerMicrophone(peer);
+  // Replace the requesting document while its native decision is still outstanding.
+  await peer.client.evaluate("location.assign('/media-reloaded'); true");
+  await until('replacement document loaded', async () => {
+    const result = await peer.client.call('Runtime.evaluate', {
+      expression: "location.pathname==='/media-reloaded' && window.fixtureMicState==='idle'", returnByValue: true,
+    });
+    return result.result?.value === true;
+  });
+  key(staleDialog, 'Return');
+  await until('stale microphone dialog closes', () => windowNamed('Allow microphone access') !== staleDialog);
+  key(await requestPeerMicrophone(peer), 'Escape');
+  await until('explicit microphone refusal reaches the page', () => peer.client.evaluate("window.fixtureMicState==='NotAllowedError'"));
+  assert.deepEqual(await page.evaluate('fixtureLiveMicrophone.getTracks().map(track=>track.readyState)'), ['live']);
+  checks.push('microphone consent is per window; stale document consent and explicit refusal grant no capture');
+
+  key(notificationWindow, 'ctrl+w');
+  await until('closing active microphone workspace destroys its page', async () => !(await targets(inspector)).includes(pageAddress));
+  const reopened = await openMediaPeer();
+  key(await requestPeerMicrophone(reopened), 'Escape');
+  await until('reopened workspace has no inherited grant', () => reopened.client.evaluate("window.fixtureMicState==='NotAllowedError'"));
+  checks.push('closing an active microphone workspace discards its grant; a fresh window requires consent');
 
   key(workspace, 'ctrl+q');
   await until('explicit quit exits the host', () => child.exitCode !== null);

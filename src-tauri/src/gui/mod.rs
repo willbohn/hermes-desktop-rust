@@ -1,4 +1,6 @@
 //! The only privileged renderer is the bundled connection launcher.
+#[cfg(target_os = "linux")]
+mod media;
 mod menu;
 #[cfg(target_os = "linux")]
 mod notifications;
@@ -44,6 +46,10 @@ pub struct Options {
     /// Show the launcher without connecting automatically.
     #[arg(long)]
     no_auto_connect: bool,
+    /// Synthetic WebKit devices for isolated native tests; never bypasses consent.
+    #[cfg(target_os = "linux")]
+    #[arg(long, hide = true)]
+    test_mock_media: bool,
 }
 
 pub struct HostState {
@@ -249,10 +255,13 @@ pub fn run() -> Result<(), &'static str> {
                         windows::handle_download(&launcher_download_app, event)
                     })
                     .build()?;
-            // The launcher explicitly denies page notifications and shares the worker restriction.
+            // The launcher denies notification and microphone requests and shares worker restrictions.
             #[cfg(target_os = "linux")]
-            notifications::install_denied(&launcher)?;
-            // Notification policy is Linux-only; the handle is otherwise unused on other targets.
+            {
+                notifications::install_denied(&launcher)?;
+                media::install(&launcher)?;
+            }
+            // These native permission policies are Linux-only.
             #[cfg(not(target_os = "linux"))]
             let _ = launcher;
             Ok(())

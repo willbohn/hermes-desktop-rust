@@ -83,6 +83,8 @@ That revoke action also resets a stuck consent prompt; old dialogs cannot restor
 
 Linux completion notifications use **Workspace → Allow notifications in this window…** (Ctrl+Alt+N). Consent covers that window's content, including embedded pages, for this app session. **Stop new notifications** (Ctrl+Alt+M) revokes host delivery across workspaces without rewriting the browser's permission state. A browser-level refusal requires quitting and reopening the app before requesting again; sign-in data is not cleared. Persistent/service-worker OS notifications are deliberately suppressed because WebKit cannot attribute them to a consented window. See [notification behavior and limits](docs/notification-verification.md).
 
+Linux microphone requests use a native consent dialog. Access includes embedded content and can continue in the background; **close the workspace to end its access**. Camera and screen capture are not granted by this prompt. The native test exercises consent and real encoding with synthetic devices, not your microphone. Physical audio, provider transcription and other platforms still need verification. See [microphone scope and evidence](docs/media-verification.md).
+
 Only the bundled connection launcher has native IPC permission. Hosted workspace windows do not gain Tauri filesystem or shell access; their existing authenticated gateway and plugin trust model still applies. See [SECURITY.md](SECURITY.md).
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing. Upstream fixes should stay small and independently reviewable; a host replacement needs discussion with Hermes maintainers. AI-assisted work and actual verification must be disclosed, without implying human review or upstream endorsement.
