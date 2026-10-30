@@ -1,0 +1,28 @@
+# Security
+
+## Reporting
+
+Do not put secrets, private conversations or exploit details in public issues. Use [GitHub private vulnerability reporting](https://github.com/willbohn/hermes-desktop-rust/security/advisories/new) for this repository (enabled). Upstream Hermes vulnerabilities follow [Nous Research's security policy](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md), not this project's issue tracker.
+
+## Boundaries
+
+- The bundled **launcher** is the only page authorized for native IPC. Capabilities name that window exactly and do not authorize remote URLs. Native commands additionally verify its local URL and window label.
+- Hosted workspaces use upstream HTTP/WebSocket authentication. They receive no filesystem, shell, process, opener or window-management Tauri permissions. The host invokes a configured Hermes executable directly with bounded arguments, output and deadlines; it does not build shell command strings.
+- One-use launch tickets are sensitive. They are passed directly from Rust to the workspace webview, not returned to launcher JavaScript, logged, stored in window titles or persisted in a connection registry. Raw CLI output is never shown in errors.
+- Remote workspace addresses require HTTPS. Plain HTTP is accepted only for loopback. Embedded userinfo, query parameters and fragments are rejected at the user-facing address boundary; upstream-generated local launch tickets are handled separately.
+- Navigation cannot enter privileged Tauri pages, local files or executable schemes. HTTPS identity-provider redirects remain possible in unprivileged workspace windows. Native chrome identifies the origin rather than trusting page-supplied titles.
+- External links require native confirmation before opening the OS browser. Same-origin workspace popouts retain the upstream sign-in/window handoff. Windows are bounded to limit popup floods.
+- Downloads are refused until native folder selection grants permission for this app session. It applies to all workspaces and can be revoked for new transfers. The original engine transfer retains authentication; sanitized filenames stay inside the chosen directory and existing paths are skipped. This is not a disk quota or a sandbox against other processes running as the same OS user. See [download verification](docs/download-verification.md).
+- Revocation invalidates pending consent callbacks and resets the dialog gate. A late result from an older picker cannot restore permission or unlock a newer prompt. Every webview must install the download policy; keep declarative `app.windows` empty because WebKit download handlers share a context.
+- Linux creates a first, app-lifetime blank download-context owner so those callbacks remain valid after user windows close. It is hidden, permits only `about:blank`, denies media/notification requests and has no native IPC capability. It is excluded from workspace limits and user-window exit decisions. A recreated launcher receives the same policies and caller/origin checks as the initial one.
+- The host does not stop the shared gateway when closed and never silently changes Webapp, provider, security or profile configuration. Build/install work requires an explicit action.
+- Linux page notifications require native consent scoped to the window and top-level origin, including embedded content as disclosed in the prompt. Text is bounded, remote icons are not fetched, and bodies are escaped only when the service supports markup. IDs, signals and closes bind to the replying daemon's unique bus identity, not a reusable service name. Revocation invalidates pending decisions and queued grants; late OS replies are closed. Browser permission state is not falsified.
+- The shared-GIO outgoing notification guard is installed before webviews. WebKit's unattributed persistent/worker deliveries cannot use the consent-checked Rust connection. The guard stays for the app session; shared-bus loss exits the host rather than reconnecting without it. This depends on WebKit's GIO backend and requires native regression testing on engine upgrades. See [notification scope](docs/notification-verification.md).
+- Linux microphone capture requires native consent for the workspace, including embedded content as disclosed. WebKit owns its cached grant; closing the workspace ends its access. Pending decisions are bound to the top-level document and origin; the native API does not identify the requesting frame. The launcher, camera, mixed camera/audio and display capture are denied. No API-hiding “revoke” switch, permission polyfill or cookie deletion is used. See [media scope and engine dependencies](docs/media-verification.md).
+- No telemetry or automatic updater is included. Update the host deliberately from a reviewed revision; update Hermes through its supported updater. A Rust binary is not a substitute for current OS webview security patches.
+
+## What this does not promise
+
+Desktop ESM plugins retain upstream application authority. They are **trusted code**, not safely sandboxed untrusted extensions. Upstream plugin review, signing/pinning practices and backend approval rules still apply. Keeping native IPC narrow does not prevent a trusted plugin from using the authenticated Hermes application API.
+
+This is an experimental host. macOS/Windows native behavior, embedded-browser replacement, OS permissions and release signing need dedicated verification before production parity is claimed. Read [the compatibility matrix](docs/compatibility.md) before choosing it over official Desktop. System webview storage is local to the OS user; disk encryption and account security remain operator responsibilities.

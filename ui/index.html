@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Hermes Desktop Rust</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="launcher.mjs"></script>
+</head>
+<body>
+<main>
+  <header><span class="mark" aria-hidden="true">H</span><span>Hermes Desktop <span class="badge">Rust · Preview</span></span></header>
+  <h1>Your Hermes.<br>A native Rust home.</h1>
+  <p class="intro">Your sessions, tools, skills and plugins stay with Hermes.<br>This app connects to your existing workspace.</p>
+  <form id="local-form">
+    <label for="profile">Local profile <span class="hint">optional</span></label>
+    <div class="row"><input id="profile" name="profile" autocomplete="off" placeholder="default" maxlength="64"><button type="submit" id="connect">Open workspace <span aria-hidden="true">↗</span></button></div>
+  </form>
+  <p class="note">Uses your installed Hermes. No model changes, copied credentials or automatic installs.</p>
+  <details id="remote-details">
+    <summary>Use a remote workspace</summary>
+    <form id="remote-form">
+      <label for="url">HTTPS workspace address</label>
+      <div class="row"><input id="url" name="url" type="url" placeholder="https://hermes.example.com/" autocomplete="url" spellcheck="false" required><button type="submit">Connect</button></div>
+      <p class="note">Sign in inside the workspace. Don’t paste tokens or passwords here.</p>
+    </form>
+  </details>
+  <section id="feedback" aria-busy="false">
+    <p id="status" role="status" aria-live="polite"></p>
+    <div id="error" role="alert" hidden><h2 id="error-title"></h2><p id="recovery"></p></div>
+  </section>
+  <details class="troubleshooting">
+    <summary>Local setup &amp; recovery</summary>
+    <p>The Webapp must be enabled in your Hermes installation. This host never changes that setting for you.</p>
+    <p>If the local renderer is missing, build it, then open the workspace again. Building may download dependencies.</p>
+    <button id="build" type="button" class="secondary">Build local workspace</button>
+    <p class="note">Runs <code>hermes webapp --build-only</code>. Closing this app never stops the shared gateway.</p>
+  </details>
+  <footer>Independent, open-source preview · No telemetry<br>Some Electron-only features are not yet available. See the compatibility guide in the repository.</footer>
+</main>
+</body>
+</html>

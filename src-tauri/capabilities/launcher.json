@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "launcher",
+  "description": "Only the bundled launcher can start a bounded CLI client or open a workspace. No remote URLs, shell, filesystem, eval or credential APIs.",
+  "local": true,
+  "windows": ["launcher"],
+  "permissions": ["allow-launch-workspace", "allow-build-renderer", "allow-launch-options"]
+}

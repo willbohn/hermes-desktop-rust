@@ -1,0 +1,484 @@
+diff --git a/apps/desktop/src/app/starmap/text.test.ts b/apps/desktop/src/app/starmap/text.test.ts
+new file mode 100644
+index 00000000..c817338e
+--- /dev/null
++++ b/apps/desktop/src/app/starmap/text.test.ts
+@@ -0,0 +1,62 @@
++import { describe, expect, it } from 'vitest'
++
++import { wrapText } from './text'
++
++/**
++ * Deterministic stand-in for `CanvasRenderingContext2D`: every code point is
++ * `charW` wide, so a line's measured width is `codePoints × charW`. This keeps
++ * the wrap decision a pure function of the text, without a real canvas.
++ */
++function ctx(charW = 10): CanvasRenderingContext2D {
++  return { measureText: (s: string) => ({ width: [...s].length * charW }) } as unknown as CanvasRenderingContext2D
++}
++
++/** Width of the widest line, in the fake canvas's units. */
++function widest(lines: string[], charW = 10): number {
++  return Math.max(0, ...lines.map(line => [...line].length * charW))
++}
++
++describe('wrapText', () => {
++  it('keeps ordinary whitespace word wrapping', () => {
++    const lines = wrapText(ctx(10), 'alpha beta gamma delta', 60)
++
++    expect(lines).toEqual(['alpha', 'beta', 'gamma', 'delta'])
++    expect(lines.join(' ')).toBe('alpha beta gamma delta')
++    expect(widest(lines)).toBeLessThanOrEqual(60)
++  })
++
++  it('wraps a continuous CJK label within the width budget without losing text', () => {
++    // The Memory Graph tooltip's repro shape: one long unspaced CJK run, 11px
++    // glyphs, a 368px title box (#146215).
++    const label = '中文标签应当在画布提示范围内完整可读'.repeat(20)
++    const lines = wrapText(ctx(11), label, 368)
++
++    expect(lines.length).toBeGreaterThan(1)
++    expect(widest(lines, 11)).toBeLessThanOrEqual(368)
++    // No whitespace to lose: concatenating the lines must reproduce the input.
++    expect(lines.join('')).toBe(label)
++  })
++
++  it('breaks at grapheme boundaries and never splits a grapheme cluster', () => {
++    // A family emoji is ONE grapheme (7 code points / 4 people + 3 ZWJ) but is
++    // wider than the budget on its own — each stays whole on its own line.
++    const family = '👨\u200d👩\u200d👧\u200d👦'
++    const label = family.repeat(10)
++    const lines = wrapText(ctx(10), label, 20)
++
++    expect(lines).toEqual(Array.from({ length: 10 }, () => family))
++    expect(lines.join('')).toBe(label)
++  })
++
++  it('preserves whitespace wrapping for mixed Latin + CJK content', () => {
++    const lines = wrapText(ctx(10), 'hello 中文标签', 60)
++
++    expect(lines.join(' ')).toBe('hello 中文标签')
++    expect(widest(lines)).toBeLessThanOrEqual(60)
++  })
++
++  it('returns no lines for empty or whitespace-only input', () => {
++    expect(wrapText(ctx(), '', 100)).toEqual([])
++    expect(wrapText(ctx(), '   ', 100)).toEqual([])
++  })
++})
+diff --git a/apps/desktop/src/app/starmap/text.ts b/apps/desktop/src/app/starmap/text.ts
+index d13edb86..11baf8dd 100644
+--- a/apps/desktop/src/app/starmap/text.ts
++++ b/apps/desktop/src/app/starmap/text.ts
+@@ -49,7 +49,50 @@ export function nodeFooter(node: StarmapNode): null | string {
+   return null
+ }
+ 
++/** Grapheme segmenter, built once. `undefined` locale uses the runtime default;
++ *  the app only needs *some* grapheme segmentation, not a locale-specific one. */
++function graphemeSegmenter(): Intl.Segmenter | null {
++  return typeof Intl !== 'undefined' && 'Segmenter' in Intl
++    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
++    : null
++}
++
++/** Break a single token that cannot fit on its own line at grapheme
++ *  boundaries. Continuous CJK (and any unspaced script) has no whitespace to
++ *  break on, so a word-level wrap leaves it on one oversized line (#146215);
++ *  segmenting by grapheme lets it wrap within the width budget without
++ *  splitting a user-perceived character. A grapheme wider than the whole
++ *  budget still gets its own line — nothing is silently dropped. */
++function breakLongToken(ctx: CanvasRenderingContext2D, token: string, maxW: number): string[] {
++  const segmenter = graphemeSegmenter()
++
++  // No segmenter (unexpected): keep the old single-token line rather than throw.
++  if (!segmenter) {
++    return [token]
++  }
++
++  const lines: string[] = []
++  let line = ''
++
++  for (const { segment } of segmenter.segment(token)) {
++    if (line && ctx.measureText(line + segment).width > maxW) {
++      lines.push(line)
++      line = segment
++    } else {
++      line += segment
++    }
++  }
++
++  if (line) {
++    lines.push(line)
++  }
++
++  return lines.length ? lines : [token]
++}
++
+ // Greedy word-wrap for the tooltip title so long memory lines don't blow out.
++// Whitespace words wrap as before; a word too wide for a line on its own is
++// broken at grapheme boundaries so unspaced CJK labels stay inside the box.
+ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+   const words = text.split(/\s+/).filter(Boolean)
+   const lines: string[] = []
+@@ -58,12 +101,29 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
+   for (const word of words) {
+     const next = line ? `${line} ${word}` : word
+ 
+-    if (!line || ctx.measureText(next).width <= maxW) {
++    if (ctx.measureText(next).width <= maxW) {
+       line = next
+-    } else {
++
++      continue
++    }
++
++    // The word doesn't fit after the open line: flush it first.
++    if (line) {
+       lines.push(line)
++      line = ''
++    }
++
++    if (ctx.measureText(word).width <= maxW) {
+       line = word
++
++      continue
+     }
++
++    // The word alone overflows: break it, leaving the last segment open so a
++    // following short word can still join it.
++    const broken = breakLongToken(ctx, word, maxW)
++    lines.push(...broken.slice(0, -1))
++    line = broken[broken.length - 1] ?? ''
+   }
+ 
+   if (line) {
+diff --git a/apps/desktop/src/components/pane-shell/tree/renderer/narrow-overlays.tsx b/apps/desktop/src/components/pane-shell/tree/renderer/narrow-overlays.tsx
+index 977ee02d..bbee37a5 100644
+--- a/apps/desktop/src/components/pane-shell/tree/renderer/narrow-overlays.tsx
++++ b/apps/desktop/src/components/pane-shell/tree/renderer/narrow-overlays.tsx
+@@ -306,6 +306,7 @@ export function NarrowOverlays() {
+                   aria-selected={pane.id === revealed.id}
+                   data-narrow-overlay-tab={pane.id}
+                   key={pane.id}
++                  onActivate={() => setReveal(current => ({ id: pane.id, pinned: current?.pinned ?? false }))}
+                   onPointerDown={event => {
+                     if (event.button === 0) {
+                       event.preventDefault()
+diff --git a/apps/desktop/src/components/pane-shell/tree/renderer/tree-group.tsx b/apps/desktop/src/components/pane-shell/tree/renderer/tree-group.tsx
+index 69e14401..37b57699 100644
+--- a/apps/desktop/src/components/pane-shell/tree/renderer/tree-group.tsx
++++ b/apps/desktop/src/components/pane-shell/tree/renderer/tree-group.tsx
+@@ -667,6 +667,7 @@ export function TreeGroup({
+                     aria-selected={paneId === activeId}
+                     data-tree-tab={paneId}
+                     key={paneId}
++                    onActivate={() => restoreTreePane(paneId)}
+                     onClick={event => {
+                       event.stopPropagation()
+                       restoreTreePane(paneId)
+@@ -761,12 +762,27 @@ export function TreeGroup({
+                   const title = tabText(paneId)
+                   const isSelected = tabSelection?.groupId === node.id && tabSelection.ids.has(paneId)
+ 
++                  // Activation verb shared by the pointer gesture (onTap below)
++                  // and the keyboard verb (Enter/Space via PaneTab.onActivate):
++                  // restore a minimized group, drop any multi-tab selection,
++                  // then make this pane the zone's active tab.
++                  const activate = () => {
++                    clearTabSelection()
++
++                    if (node.minimized) {
++                      restoreTreePane(paneId)
++                    }
++
++                    activateTreePane(node.id, paneId)
++                  }
++
+                   const tab = (
+                     <PaneTab
+                       active={isActive}
+                       aria-selected={isActive}
+                       data-tree-tab={paneId}
+                       key={paneId}
++                      onActivate={activate}
+                       onClose={closeable ? () => closeTab(paneId) : undefined}
+                       onPointerDown={e => {
+                         // Chrome's tab-selection grammar, ahead of activate/drag:
+@@ -796,15 +812,7 @@ export function TreeGroup({
+                         // double-click a minimize/restore/hide lottery. A plain
+                         // click also collapses any multi-tab selection back to the
+                         // one tab (Chrome semantics).
+-                        const onTap = () => {
+-                          clearTabSelection()
+-
+-                          if (node.minimized) {
+-                            restoreTreePane(paneId)
+-                          }
+-
+-                          activateTreePane(node.id, paneId)
+-                        }
++                        const onTap = activate
+ 
+                         // Claim the press so the STRIP's own pane-drag handler
+                         // (parent onPointerDown) can't also fire. startPaneDrag
+diff --git a/apps/desktop/src/components/ui/pane-tab-keyboard.test.tsx b/apps/desktop/src/components/ui/pane-tab-keyboard.test.tsx
+new file mode 100644
+index 00000000..181d9da5
+--- /dev/null
++++ b/apps/desktop/src/components/ui/pane-tab-keyboard.test.tsx
+@@ -0,0 +1,124 @@
++import { cleanup, fireEvent, render, screen } from '@testing-library/react'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++
++import { PaneTab, PaneTabLabel, PaneTabStrip } from './pane-tab'
++
++afterEach(cleanup)
++
++/** Three zone tabs in a strip, the first active — the shape the shell renders
++ *  for a stacked pane group (WORKFLOWS | …). */
++function renderTabs(onActivate: (id: string) => void = () => {}) {
++  return render(
++    <PaneTabStrip>
++      <PaneTab active aria-selected onActivate={() => onActivate('a')} role="tab">
++        <PaneTabLabel>Alpha</PaneTabLabel>
++      </PaneTab>
++      <PaneTab aria-selected={false} onActivate={() => onActivate('b')} role="tab">
++        <PaneTabLabel>Beta</PaneTabLabel>
++      </PaneTab>
++      <PaneTab aria-selected={false} onActivate={() => onActivate('c')} role="tab">
++        <PaneTabLabel>Gamma</PaneTabLabel>
++      </PaneTab>
++    </PaneTabStrip>
++  )
++}
++
++describe('PaneTab keyboard navigation (ARIA tabs pattern)', () => {
++  it('exposes a tablist of tabs with a roving tabindex (only the selected tab is tabbable)', () => {
++    renderTabs()
++
++    expect(screen.getByRole('tablist')).toBeTruthy()
++
++    const tabs = screen.getAllByRole('tab')
++    expect(tabs).toHaveLength(3)
++    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
++
++    // Roving tabindex: exactly the selected tab sits in the page tab order.
++    expect(tabs[0].tabIndex).toBe(0)
++    expect(tabs[1].tabIndex).toBe(-1)
++    expect(tabs[2].tabIndex).toBe(-1)
++  })
++
++  it('ArrowRight moves focus to the next tab and wraps at the end', () => {
++    renderTabs()
++
++    const tabs = screen.getAllByRole('tab')
++    tabs[0].focus()
++    expect(globalThis.document.activeElement).toBe(tabs[0])
++
++    fireEvent.keyDown(tabs[0], { key: 'ArrowRight' })
++    expect(globalThis.document.activeElement).toBe(tabs[1])
++
++    fireEvent.keyDown(tabs[1], { key: 'ArrowRight' })
++    expect(globalThis.document.activeElement).toBe(tabs[2])
++
++    fireEvent.keyDown(tabs[2], { key: 'ArrowRight' })
++    expect(globalThis.document.activeElement).toBe(tabs[0])
++  })
++
++  it('ArrowLeft moves focus to the previous tab and wraps at the start', () => {
++    renderTabs()
++
++    const tabs = screen.getAllByRole('tab')
++    tabs[0].focus()
++
++    fireEvent.keyDown(tabs[0], { key: 'ArrowLeft' })
++    expect(globalThis.document.activeElement).toBe(tabs[2])
++
++    fireEvent.keyDown(tabs[2], { key: 'ArrowLeft' })
++    expect(globalThis.document.activeElement).toBe(tabs[1])
++  })
++
++  it('Home and End jump focus to the first and last tab', () => {
++    renderTabs()
++
++    const tabs = screen.getAllByRole('tab')
++    tabs[1].focus()
++
++    fireEvent.keyDown(tabs[1], { key: 'End' })
++    expect(globalThis.document.activeElement).toBe(tabs[2])
++
++    fireEvent.keyDown(tabs[2], { key: 'Home' })
++    expect(globalThis.document.activeElement).toBe(tabs[0])
++  })
++
++  it('Enter activates the focused tab, not the currently active one', () => {
++    const onActivate = vi.fn()
++    renderTabs(onActivate)
++
++    const tabs = screen.getAllByRole('tab')
++    tabs[1].focus()
++    fireEvent.keyDown(tabs[1], { key: 'Enter' })
++
++    expect(onActivate).toHaveBeenCalledTimes(1)
++    expect(onActivate).toHaveBeenCalledWith('b')
++  })
++
++  it('Space activates the focused tab', () => {
++    const onActivate = vi.fn()
++    renderTabs(onActivate)
++
++    const tabs = screen.getAllByRole('tab')
++    tabs[2].focus()
++    fireEvent.keyDown(tabs[2], { key: ' ' })
++
++    expect(onActivate).toHaveBeenCalledWith('c')
++  })
++
++  it('leaves a non-tab PaneTab (a page header) unfocusable and inert to tab keys', () => {
++    const onActivate = vi.fn()
++    render(
++      <PaneTab onActivate={onActivate}>
++        <PaneTabLabel>Header</PaneTabLabel>
++      </PaneTab>
++    )
++
++    const header = screen.getByText('Header').closest('[data-slot="pane-tab"]') as HTMLElement
++    expect(header.getAttribute('role')).toBeNull()
++    expect(header.tabIndex).toBe(-1)
++
++    fireEvent.keyDown(header, { key: 'ArrowRight' })
++    fireEvent.keyDown(header, { key: 'Enter' })
++    expect(onActivate).not.toHaveBeenCalled()
++  })
++})
+diff --git a/apps/desktop/src/components/ui/pane-tab.tsx b/apps/desktop/src/components/ui/pane-tab.tsx
+index 6999705f..0356ccb0 100644
+--- a/apps/desktop/src/components/ui/pane-tab.tsx
++++ b/apps/desktop/src/components/ui/pane-tab.tsx
+@@ -14,8 +14,11 @@ export const PANE_TAB_STRIP_LINE_RIGHT = 'shadow-[inset_-1px_0_0_var(--ui-stroke
+ 
+ // Surface tokens become transparent under glass; the body owns the tint.
+ // The close-button fade masks the label, so it needs no second surface fill.
++// `focus-visible` ring: a tab is keyboard-focusable (roving tabindex), so it
++// needs a visible focus mark; `z-10` keeps the ring above the neighbouring
++// tab's border instead of being clipped by it.
+ const TAB =
+-  'group/tab relative flex shrink-0 items-center border-transparent bg-(--tab-bg) text-[0.6875rem] font-medium [-webkit-app-region:no-drag]'
++  'group/tab relative flex shrink-0 items-center border-transparent bg-(--tab-bg) text-[0.6875rem] font-medium outline-none [-webkit-app-region:no-drag] focus-visible:z-10 focus-visible:ring-[0.1875rem] focus-visible:ring-ring/35'
+ 
+ // Full height: with the strip's rule removed there is no last-pixel row to
+ // leave uncovered, so tabs fill the bar and no sliver of gutter shows through.
+@@ -65,6 +68,10 @@ interface PaneTabProps extends React.ComponentProps<'div'> {
+   vertical?: boolean
+   /** Content-facing edge of a vertical rail — the strip line the active tab cuts. */
+   side?: 'left' | 'right'
++  /** Keyboard activation verb (Enter/Space) for a `role="tab"` tab. Pointer
++   *  activation stays on the call site's own handlers; this is the ARIA tabs
++   *  pattern's keyboard equivalent. */
++  onActivate?: () => void
+ }
+ 
+ /**
+@@ -78,14 +85,18 @@ export const PaneTab = React.forwardRef<HTMLDivElement, PaneTabProps>(function P
+   {
+     active = false,
+     dirty = false,
++    onActivate,
++    onClickCapture,
+     onClose,
++    onKeyDown,
+     onMouseDown,
+     onPointerDown,
+     onPointerUp,
+-    onClickCapture,
++    role,
+     selected = false,
+-    vertical = false,
+     side = 'left',
++    tabIndex,
++    vertical = false,
+     children,
+     className,
+     ...props
+@@ -97,6 +108,63 @@ export const PaneTab = React.forwardRef<HTMLDivElement, PaneTabProps>(function P
+   const edge = vertical ? (side === 'right' ? 'border-l' : 'border-r') : undefined
+   const middle = middleClickHandlers(onClose)
+ 
++  // ARIA tabs pattern, applied only to real tabs (`role="tab"`): the selected
++  // tab carries the strip's single tab stop (roving tabindex), Arrow/Home/End
++  // move focus between the tabs, and Enter/Space activates. A `PaneTab` used as
++  // a page header (no role) is left untouched.
++  const isTab = role === 'tab'
++  const ariaSelected = props['aria-selected'] === true || props['aria-selected'] === 'true'
++  const resolvedTabIndex = tabIndex ?? (isTab ? (active || ariaSelected ? 0 : -1) : undefined)
++
++  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
++    onKeyDown?.(event)
++
++    if (event.defaultPrevented || !isTab) {
++      return
++    }
++
++    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
++      event.preventDefault()
++      onActivate?.()
++
++      return
++    }
++
++    const step =
++      event.key === 'ArrowRight' || event.key === 'ArrowDown'
++        ? 1
++        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
++          ? -1
++          : 0
++
++    if (step === 0 && event.key !== 'Home' && event.key !== 'End') {
++      return
++    }
++
++    const list = event.currentTarget.closest('[role="tablist"]')
++
++    if (!list) {
++      return
++    }
++
++    // Only tabs that belong to THIS list — a nested strip's tabs don't count.
++    const tabs = Array.from(list.querySelectorAll<HTMLElement>('[role="tab"]')).filter(
++      el => el.closest('[role="tablist"]') === list
++    )
++
++    const index = tabs.indexOf(event.currentTarget)
++
++    if (index === -1) {
++      return
++    }
++
++    const next =
++      event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + step + tabs.length) % tabs.length
++
++    event.preventDefault()
++    tabs[next]?.focus()
++  }
++
+   return (
+     <div
+       className={cn(
+@@ -126,6 +194,7 @@ export const PaneTab = React.forwardRef<HTMLDivElement, PaneTabProps>(function P
+ 
+         onClickCapture?.(event)
+       }}
++      onKeyDown={handleKeyDown}
+       onMouseDown={event => {
+         middle.onMouseDown(event)
+         onMouseDown?.(event)
+@@ -151,6 +220,8 @@ export const PaneTab = React.forwardRef<HTMLDivElement, PaneTabProps>(function P
+         onPointerUp?.(event)
+       }}
+       ref={ref}
++      role={role}
++      tabIndex={resolvedTabIndex}
+       {...props}
+     >
+       <div

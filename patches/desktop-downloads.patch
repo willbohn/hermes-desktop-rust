@@ -1,0 +1,93 @@
+diff --git a/apps/desktop/src/lib/session-export.test.ts b/apps/desktop/src/lib/session-export.test.ts
+new file mode 100644
+index 00000000..b36fe5f7
+--- /dev/null
++++ b/apps/desktop/src/lib/session-export.test.ts
+@@ -0,0 +1,60 @@
++// Regression: the native WebKit export probe cannot consume an immediately revoked blob URL.
++// Keep the real download helper's lifetime and DOM attachment, while preserving profile routing.
++import { afterEach, beforeEach, expect, it, vi } from 'vitest'
++
++const { getAllSessionMessages, notify, notifyError } = vi.hoisted(() => ({
++  getAllSessionMessages: vi.fn(),
++  notify: vi.fn(),
++  notifyError: vi.fn()
++}))
++
++vi.mock('@/hermes', () => ({ getAllSessionMessages }))
++vi.mock('@/i18n', () => ({ translateNow: (key: string) => key }))
++vi.mock('@/store/notifications', () => ({ notify, notifyError }))
++
++import { exportSession } from './session-export'
++
++beforeEach(() => {
++  vi.useFakeTimers()
++  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:http://localhost/export-fixture')
++  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
++})
++
++afterEach(() => {
++  vi.clearAllTimers()
++  vi.useRealTimers()
++  vi.restoreAllMocks()
++  vi.resetAllMocks()
++})
++
++it('keeps a profile export available until the browser can consume its bytes', async () => {
++  const messages = [{ role: 'assistant', content: 'export fixture' }]
++  getAllSessionMessages.mockResolvedValue({ messages })
++  const clicked: Array<{ connected: boolean; name: string; href: string }> = []
++  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
++    clicked.push({ connected: this.isConnected, name: this.download, href: this.href })
++  })
++
++  await exportSession('session-123', { profile: 'work', title: 'My Session' })
++
++  expect(getAllSessionMessages).toHaveBeenCalledWith('session-123', 'work')
++  expect(URL.revokeObjectURL).not.toHaveBeenCalled()
++  expect(clicked).toEqual([
++    { connected: true, name: 'my-session-session-.json', href: 'blob:http://localhost/export-fixture' }
++  ])
++  const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob
++  expect(JSON.parse(await blob.text())).toMatchObject({ session_id: 'session-123', message_count: 1, messages })
++  expect(document.querySelector('a[download]')).toBeNull()
++  expect(notifyError).not.toHaveBeenCalled()
++  vi.runAllTimers()
++  expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:http://localhost/export-fixture')
++})
++
++it('does not export partial data or show success when the authoritative read fails', async () => {
++  const failure = new Error('fixture unavailable')
++  getAllSessionMessages.mockRejectedValue(failure)
++  await exportSession('session-123', { profile: 'work' })
++  expect(URL.createObjectURL).not.toHaveBeenCalled()
++  expect(notify).not.toHaveBeenCalled()
++  expect(notifyError).toHaveBeenCalledWith(failure, 'desktop.sessionExportFailed')
++})
+diff --git a/apps/desktop/src/lib/session-export.ts b/apps/desktop/src/lib/session-export.ts
+index a64621ec..5941e061 100644
+--- a/apps/desktop/src/lib/session-export.ts
++++ b/apps/desktop/src/lib/session-export.ts
+@@ -3,6 +3,8 @@ import { getAllSessionMessages } from '@/hermes'
+ import { translateNow } from '@/i18n'
+ import { notify, notifyError } from '@/store/notifications'
+ 
++import { downloadBlob } from './download'
++
+ interface ExportSessionParams {
+   sessionId: string
+   profile?: string | null
+@@ -45,12 +47,7 @@ export async function exportSession(sessionId: string, params: Omit<ExportSessio
+     }
+ 
+     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+-    const downloadUrl = URL.createObjectURL(blob)
+-    const anchor = document.createElement('a')
+-    anchor.href = downloadUrl
+-    anchor.download = sessionExportFilename(sessionId, params.title)
+-    anchor.click()
+-    URL.revokeObjectURL(downloadUrl)
++    downloadBlob(blob, sessionExportFilename(sessionId, params.title))
+ 
+     notify({ kind: 'success', message: translateNow('desktop.sessionExported'), durationMs: 2_000 })
+   } catch (err) {
