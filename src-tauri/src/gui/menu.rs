@@ -119,10 +119,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
 
             "quit" => app.exit(0),
             "connect" => {
-                if let Some(window) = app.get_webview_window("launcher") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                let _ = super::show_launcher(app);
             }
             "downloads" => windows::choose_download_folder(app),
             #[cfg(target_os = "linux")]

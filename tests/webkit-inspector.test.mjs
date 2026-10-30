@@ -3,6 +3,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as webkit from '../scripts/webkit-inspector.mjs';
 
+test('discovery skips pages without a loaded document, not loaded pages with a blank title', async t => {
+  const row = (id, title, url) => `<tr><td class="data"><div class="targetname">${title}</div><div class="targeturl">${url}</div></td><td><input onclick="window.open('/socket/1/${id}/WebPage')"></td></tr>`;
+  const html = `<table>${row(1, '', 'about:blank')}${row(2, '', '')}${row(3, 'about:blank', 'http://127.0.0.1/fixture')}${row(4, '', 'tauri://localhost/index.html')}</table>`;
+  t.mock.method(globalThis, 'fetch', async () => new Response(html));
+  assert.deepEqual(await webkit.targets('http://inspector.test'), [
+    'ws://inspector.test/socket/1/3/WebPage',
+    'ws://inspector.test/socket/1/4/WebPage',
+  ]);
+});
+
 function controlledSocket(t) {
   const original = globalThis.WebSocket;
   const sockets = [];

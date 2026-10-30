@@ -4,7 +4,7 @@ use hermes_desktop_rust::policy::{
     confirmable_link, navigation_allowed, next_download_destination, popup_origin_allowed,
     sanitized_download_name, window_title,
 };
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
@@ -16,12 +16,45 @@ use url::Url;
 
 const MAX_WORKSPACE_WINDOWS: usize = 8;
 
+/// Wry's shared-context download callbacks outlive their originating webviews, but Tauri refuses
+/// a callback whose view is gone. Keep the first policy owner alive independently of user windows.
+/// Checked with Wry 0.57.1 / Tauri 2.12.5: decide-destination is first-handler-wins.
+/// Recheck signal ordering and the close-then-download native regression on upgrades.
+#[cfg(target_os = "linux")]
+pub fn create_download_context_owner(app: &tauri::AppHandle) -> Result<(), &'static str> {
+    let download_app = app.clone();
+    let owner = WebviewWindowBuilder::new(
+        app,
+        "download-context",
+        WebviewUrl::External(Url::parse("about:blank").expect("about:blank is a URL")),
+    )
+    .visible(false)
+    .focused(false)
+    .skip_taskbar(true)
+    .devtools(false)
+    .on_navigation(|url| url.as_str() == "about:blank")
+    .on_download(move |_webview, event| handle_download(&download_app, event))
+    .build()
+    .map_err(|_| "The download policy owner could not be created")?;
+    // No page content, navigation or native IPC authority; retain the same explicit media denials.
+    super::notifications::install_denied(&owner)?;
+    super::media::install(&owner)?;
+    Ok(())
+}
+
 pub fn open_workspace(
     app: &tauri::AppHandle,
     target: Url,
     features: Option<NewWindowFeatures>,
+    launcher: Option<WebviewWindow>,
 ) -> Result<WebviewWindow, &'static str> {
-    if app.webview_windows().len() > MAX_WORKSPACE_WINDOWS {
+    if app
+        .webview_windows()
+        .keys()
+        .filter(|label| label.starts_with("workspace-"))
+        .count()
+        >= MAX_WORKSPACE_WINDOWS
+    {
         return Err("Close an unused workspace window before opening another");
     }
     let state = app.state::<HostState>();
@@ -33,7 +66,7 @@ pub fn open_workspace(
     let popup_label = label.clone();
     let cleanup_label = label.clone();
     let popup_app = app.clone();
-    let page_app = app.clone();
+    let first_load = AtomicBool::new(true);
     let download_app = app.clone();
     let zoom_app = app.clone();
     // Popups use the engine's handoff. Linux also secures a blank top-level view before
@@ -53,9 +86,11 @@ pub fn open_workspace(
             let _ = window.set_title(&window_title(payload.url()));
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
                 && payload.url().as_str() != "about:blank"
-                && let Some(launcher) = page_app.get_webview_window("launcher")
+                && first_load.swap(false, Ordering::Relaxed)
+                && let Some(launcher) = &launcher
             {
-                let _ = launcher.hide();
+                // Retire only this launch's owner, never a later launcher or a popup's bystander.
+                let _ = launcher.destroy();
             }
         })
         .on_new_window(move |url, features| {
@@ -68,7 +103,7 @@ pub fn open_workspace(
                 .as_ref()
                 .is_some_and(|document| popup_origin_allowed(document, &url))
             {
-                return match open_workspace(&popup_app, url, Some(features)) {
+                return match open_workspace(&popup_app, url, Some(features), None) {
                     Ok(window) => NewWindowResponse::Create { window },
                     Err(_) => NewWindowResponse::Deny,
                 };

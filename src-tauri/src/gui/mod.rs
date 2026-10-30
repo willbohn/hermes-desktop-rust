@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Mutex as StdMutex, atomic::AtomicUsize},
+    sync::{
+        Mutex as StdMutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 use tauri::{Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tokio::sync::Mutex;
@@ -54,6 +57,7 @@ pub struct Options {
 
 pub struct HostState {
     options: Options,
+    auto_connect: AtomicBool,
     busy: Mutex<()>,
     counter: AtomicUsize,
     /// Per-window zoom level, removed when its window is destroyed.
@@ -128,7 +132,7 @@ fn launch_options(
     Ok(LauncherOptions {
         profile: state.options.profile.clone(),
         url: state.options.url.clone(),
-        auto_connect: !state.options.no_auto_connect,
+        auto_connect: state.auto_connect.swap(false, Ordering::Relaxed),
     })
 }
 
@@ -162,7 +166,7 @@ async fn launch_workspace(
             )
         })?,
     };
-    windows::open_workspace(&app, target, None).map_err(|_| {
+    windows::open_workspace(&app, target, None, Some(window)).map_err(|_| {
         UiError::new(
             "window_failed",
             "The workspace window could not be created.",
@@ -198,6 +202,42 @@ async fn build_renderer(
         .map_err(|error| UiError::new("build_failed", error.message, error.recovery))
 }
 
+/// A dismissed launcher is retired, not hidden: GTK3 WebKit can retain an unhandled-key replay
+/// flag across hide/show. Recreate the same guarded surface without synthesizing keyboard input.
+fn show_launcher(app: &tauri::AppHandle) -> Result<(), &'static str> {
+    let launcher = match app.get_webview_window("launcher") {
+        Some(launcher) => launcher,
+        None => {
+            // Every webview needs this policy: wry's WebKit download context is shared.
+            let download_app = app.clone();
+            let launcher =
+                WebviewWindowBuilder::new(app, "launcher", WebviewUrl::App("index.html".into()))
+                    .title("Hermes Desktop Rust — Connect")
+                    .inner_size(650.0, 730.0)
+                    .min_inner_size(400.0, 520.0)
+                    .center()
+                    .on_navigation(|url| is_launcher("launcher", url))
+                    .on_download(move |_webview, event| {
+                        windows::handle_download(&download_app, event)
+                    })
+                    .build()
+                    .map_err(|_| "The connection window could not be created")?;
+            #[cfg(target_os = "linux")]
+            if let Err(error) =
+                notifications::install_denied(&launcher).and_then(|()| media::install(&launcher))
+            {
+                let _ = launcher.destroy();
+                return Err(error);
+            }
+            launcher
+        }
+    };
+    launcher
+        .show()
+        .and_then(|()| launcher.set_focus())
+        .map_err(|_| "The connection window could not be shown")
+}
+
 pub fn run() -> Result<(), &'static str> {
     let mut options = Options::parse();
     if let Some(url) = &options.url {
@@ -205,6 +245,7 @@ pub fn run() -> Result<(), &'static str> {
     }
     tauri::Builder::default()
         .manage(HostState {
+            auto_connect: AtomicBool::new(!options.no_auto_connect),
             options,
             busy: Mutex::new(()),
             counter: AtomicUsize::new(1),
@@ -228,7 +269,7 @@ pub fn run() -> Result<(), &'static str> {
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
-                .with_denylist(&["launcher"])
+                .with_denylist(&["launcher", "download-context"])
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
@@ -239,53 +280,20 @@ pub fn run() -> Result<(), &'static str> {
         .setup(|app| {
             menu::install(app)?;
             #[cfg(target_os = "linux")]
-            notifications::initialize(app.handle())?;
-            // The launcher must install a download handler too. wry registers a download handler on
-            // the app's shared web context for every webview and its built-in default is permissive,
-            // so a launcher without one would allow downloads for the whole app.
-            let launcher_download_app = app.handle().clone();
-            let launcher =
-                WebviewWindowBuilder::new(app, "launcher", WebviewUrl::App("index.html".into()))
-                    .title("Hermes Desktop Rust — Connect")
-                    .inner_size(650.0, 730.0)
-                    .min_inner_size(400.0, 520.0)
-                    .center()
-                    .on_navigation(|url| is_launcher("launcher", url))
-                    .on_download(move |_webview, event| {
-                        windows::handle_download(&launcher_download_app, event)
-                    })
-                    .build()?;
-            // The launcher denies notification and microphone requests and shares worker restrictions.
-            #[cfg(target_os = "linux")]
             {
-                notifications::install_denied(&launcher)?;
-                media::install(&launcher)?;
+                notifications::initialize(app.handle())?;
+                windows::create_download_context_owner(app.handle())?;
             }
-            // These native permission policies are Linux-only.
-            #[cfg(not(target_os = "linux"))]
-            let _ = launcher;
+            show_launcher(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Keep the only connection/recovery surface available while workspaces remain.
-            if window.label() == "launcher"
-                && let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && window
-                    .app_handle()
-                    .webview_windows()
-                    .keys()
-                    .any(|label| label != "launcher")
-            {
-                api.prevent_close();
-                let _ = window.hide();
-                return;
-            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 let app = window.app_handle();
                 let remaining = app.webview_windows();
                 let peers = remaining
                     .keys()
-                    .any(|label| label != window.label() && label != "launcher");
+                    .any(|label| label != window.label() && label.starts_with("workspace-"));
                 let launcher_visible = app
                     .get_webview_window("launcher")
                     .is_some_and(|launcher| launcher.is_visible().unwrap_or(false));

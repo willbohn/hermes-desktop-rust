@@ -42,7 +42,7 @@ const fixtureHandler = (request, response) => {
         catch (error) { result=error.name; reason=error.message; }
         event.ports[0].postMessage({workerAlive:true, result, reason, permission:Notification.permission, callable:typeof self.registration.showNotification});
       })()));`);
-  } else if (request.url === '/download') {
+  } else if (request.url === '/download' || request.url === '/download-after-close') {
     downloads++;
     if (!request.headers.cookie?.includes('fixture-session=approved')) {
       response.writeHead(401).end('Fixture authentication required');
@@ -50,7 +50,7 @@ const fixtureHandler = (request, response) => {
     }
     response.writeHead(200, {
       'Content-Type': 'application/octet-stream',
-      'Content-Disposition': 'attachment; filename="cookie-proof.txt"',
+      'Content-Disposition': `attachment; filename="${request.url === '/download' ? 'cookie-proof.txt' : 'context-owner-proof.txt'}"`,
     }).end('AUTHENTICATED_FIXTURE_BYTES');
   } else if (request.url === '/download-helper.js') {
     response.writeHead(200, { 'Content-Type': 'text/javascript' }).end(downloadHelper);
@@ -224,6 +224,7 @@ try {
     catch { return 'denied'; }
   })()`), 'denied');
   checks.push('remote native IPC denied');
+  const firstWorkspaceAddress = pageAddress;
 
   assert.equal(await page.evaluate("typeof Notification"), 'function');
   // Completion notifications ask programmatically, not from a special test-only gesture.
@@ -289,24 +290,51 @@ try {
   assert.equal(popups, 1);
   checks.push('same-origin popup loads exactly once');
 
+  async function findLauncher() {
+    let found;
+    await until('bundled launcher ready', async () => {
+      for (const address of await targets(inspector)) {
+        const client = await inspection.inspect(address);
+        if (await client.evaluate("typeof document !== 'undefined' && document.readyState === 'complete' && Boolean(document.querySelector('#remote-form'))")) {
+          found = {client, address};
+          launcher = client;
+          return true;
+        }
+      }
+      return false;
+    });
+    return found;
+  }
+
   key(workspace, 'ctrl+shift+o');
   await until('connection launcher visible', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+  const closingLauncher = await findLauncher();
+  // Delay a real key's web-process reply until the native menu has dismissed the window.
+  // This reproduces GTK3 WebKit's stale replay flag without changing or consuming the key.
+  await closingLauncher.client.evaluate(`
+    window.fixtureDelayedKey=false;
+    document.addEventListener('keydown',()=>{
+      const end=performance.now()+300;
+      while(performance.now()<end) {}
+      window.fixtureDelayedKey=true;
+    },{once:true}); true`);
   key(windowNamed('Hermes Desktop Rust.*Connect'), 'ctrl+w');
   await until('connection launcher closed', () => !windowNamed('Hermes Desktop Rust.*Connect'));
+  await until('closed launcher retires or finishes its pending key', async () => {
+    if (!(await targets(inspector)).includes(closingLauncher.address)) return true;
+    try { return await closingLauncher.client.evaluate('window.fixtureDelayedKey === true'); }
+    catch (error) {
+      if (!(await targets(inspector)).includes(closingLauncher.address)) return true;
+      throw error;
+    }
+  });
   key(workspace, 'ctrl+shift+o');
   await until('connection recovery still available', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
   checks.push('closing the connection launcher does not strand active workspaces');
 
   // Use the ordinary bundled connection form to open a fresh origin, not a native grant backdoor.
   page = null; // The inspection session retains existing page connections until teardown.
-  for (const target of await targets(inspector)) {
-    const candidate = await inspection.inspect(target);
-    if (await candidate.evaluate("Boolean(document.querySelector('#remote-form'))")) {
-      launcher = candidate;
-      break;
-    }
-  }
-  assert.ok(launcher);
+  await findLauncher();
   await launcher.evaluate(`
     window.fixtureLauncherEvents=[];
     for (const name of ['keydown','click','submit','focusin']) document.addEventListener(name,event=>{
@@ -330,6 +358,7 @@ try {
     }
     return false;
   });
+  checks.push('first native key after dismissing a busy launcher submits the recovered connection form');
   const notificationWindow = windowNamed('Hermes Desktop Rust');
   await page.evaluate("document.querySelector('#notification-permission').focus(); true");
   key(notificationWindow, 'Return');
@@ -498,15 +527,17 @@ try {
   checks.push('microphone consent cannot authorize camera, mixed camera/audio or screen capture');
   key(notificationWindow, 'ctrl+shift+o');
   await until('launcher visible for media refusal', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+  await findLauncher();
   await assertCaptureRefused(launcher, 'launcher microphone refused', 'navigator.mediaDevices.getUserMedia({audio:true})', ['NotAllowedError', 'unavailable']);
   checks.push('launcher cannot acquire microphone access');
 
   async function openMediaPeer() {
     key(workspace, 'ctrl+shift+o');
     await until('launcher available for media peer', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+    await findLauncher();
     const before = new Set(await targets(inspector));
     const beforeWindows = new Set(xdo('search', '--onlyvisible', '--name', 'Hermes Desktop Rust').split('\n'));
-    await launcher.evaluate(`document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
+    await launcher.evaluate(`document.querySelector('#remote-details').open=true; document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
     key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
     let client;
     await until('same-origin media peer loaded', async () => {
@@ -562,9 +593,44 @@ try {
   await until('reopened workspace has no inherited grant', () => reopened.client.evaluate("window.fixtureMicState==='NotAllowedError'"));
   checks.push('closing an active microphone workspace discards its grant; a fresh window requires consent');
 
+  // The context owner and optional launcher must not consume a workspace slot.
+  key(reopened.window, 'ctrl+shift+o');
+  await until('launcher visible beside workspace limit probe', () => Boolean(windowNamed('Hermes Desktop Rust.*Connect')));
+  await findLauncher();
+  const openPopup = async () => {
+    const result = await reopened.client.call('Runtime.evaluate', {
+      expression: "window.open('/popup') !== null", emulateUserGesture: true, returnByValue: true,
+    });
+    return result.result.value;
+  };
+  const withLauncher = 8 + 1;
+  let count = (await targets(inspector)).length;
+  assert.ok(count < withLauncher, 'fixture must exercise at least one permitted popup');
+  while (count < withLauncher) {
+    assert.equal(await openPopup(), true);
+    count++;
+    await until('permitted popup document loaded', async () => (await targets(inspector)).length === count);
+    assert.ok(windowNamed('Hermes Desktop Rust.*Connect'), 'a popup must not dismiss another launch’s connection form');
+  }
+  assert.equal(await openPopup(), false, 'ninth workspace refused with launcher present');
+  key(windowNamed('Hermes Desktop Rust.*Connect'), 'ctrl+w');
+  await until('launcher retired before second limit probe', async () =>
+    !windowNamed('Hermes Desktop Rust.*Connect') && (await targets(inspector)).length === 8);
+  assert.equal(await openPopup(), false, 'ninth workspace refused without a launcher');
+  checks.push('eight-workspace bound excludes auxiliary views; popups do not dismiss the launcher');
+
+  key(workspace, 'ctrl+w');
+  await until('first workspace destroyed', async () => !(await targets(inspector)).includes(firstWorkspaceAddress));
+  await reopened.client.evaluate("location.href='/download-after-close'; true");
+  await until('download policy outlives the first user webviews', async () => {
+    try { return (await readFile(join(downloadDir, 'context-owner-proof.txt'), 'utf8')) === 'AUTHENTICATED_FIXTURE_BYTES'; }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  });
+  checks.push('authenticated downloads survive closing the initial launcher and first workspace');
+
   // Reap the externally attached fixture before Quit tears down its private D-Bus.
   await stopReplacementFixture();
-  key(workspace, 'ctrl+q');
+  key(reopened.window, 'ctrl+q');
   await until('explicit quit exits the host', () => child.exitCode !== null);
   assert.equal(child.exitCode, 0);
   checks.push('explicit quit exits cleanly');
@@ -602,9 +668,6 @@ try {
   await new Promise(resolve => alternateFixture.close(resolve));
   await rm(temporary, { recursive: true, force: true });
   await inspection.close();
-  await mkdir(join(root, 'artifacts'), { recursive: true });
-  await writeFile(join(root, 'artifacts/native-input-trace.log'),
-    nativeDiagnostics.split('\n').filter(line => line.startsWith('TEST GTK ')).join('\n'));
 }
 assert.doesNotMatch(nativeDiagnostics, /panicked at|panic in a function/, 'native fixture teardown must not panic');
 console.log(JSON.stringify({ passed: checks.length, checks }));

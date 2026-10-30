@@ -20,9 +20,13 @@
 ### Fixed
 
 - Include Ubuntu's GStreamer recording prerequisites; native WebKit tests exercise both local WebM/Opus and Ubuntu MP4/AAC encoding instead of accepting permission-only success.
+- Recover the first native key after dismissing a busy connection launcher. Retire the old webview instead of retaining GTK WebKit's stale key-replay state; recreate it through the same guarded builder.
+- Keep Linux's shared-context download policy alive independently of connection/workspace windows, without granting the blank policy owner native IPC or page-navigation authority.
+- Count only workspaces toward the eight-window bound. A popup or later page reload no longer dismisses an unrelated connection form.
 
-### Known issues
+### Changed
 
-- Reopened-launcher keyboard activation intermittently fails in Ubuntu CI. Native event routing is under investigation; the keyboard regression remains enabled.
+- Connection forms restart from CLI defaults after dismissal, rather than preserving unsaved edits in a hidden webview. Startup auto-connect is consumed once, not repeated on recovery.
+- The native regression forces a delayed keyboard reply across dismissal and checks real first-key submission. Inspector discovery skips unloaded blank contexts; temporary GTK input tracing is removed.
 
 Full Electron-native feature parity, signed installers, automatic updates, cross-platform runtime validation and upstream acceptance remain unverified or unimplemented. See `docs/compatibility.md`.

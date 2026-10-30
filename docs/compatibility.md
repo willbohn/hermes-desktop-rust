@@ -19,13 +19,15 @@ Baseline: `f2cc013158ce4b89f50154c09486a885835133b9` (2026-10-29). **Reuse is no
 ## Native features implemented by this host
 
 - Bounded, single-flight local CLI launch with actionable, credential-safe failure states.
-- Native windows and menus; connection/reload recovery remains reachable when the renderer fails. Reopened-launcher keyboard activation has an unresolved intermittent Ubuntu CI failure; see [verification](verification.md).
+- Native windows and menus; connection/reload recovery remains reachable when the renderer fails. A delayed-key regression covers launcher dismissal/recreation on both tested Linux engines; see [verification](verification.md).
 - Window size/position restoration; browser drag-and-drop remains enabled.
 - Native folder consent for downloads, retaining authenticated requests and blob exports; actual Linux engine/permission tests pass.
 - Linux page/completion notifications with native per-window session consent, bounded text, click/close handling and revocation; no renderer or plugin SDK replacement. See [notification evidence](notification-verification.md).
 - Linux microphone consent through the existing `getUserMedia`/`MediaRecorder` path, with workspace-lifetime access and camera/screen refusal. Synthetic capture/encoding and permission boundaries are tested; see [media evidence](media-verification.md).
 - HTTPS/loopback address validation and origin-aware native chrome.
 - A local launcher that follows system light/dark and reduced-motion preferences, uses real form labels, keyboard focus indicators and live progress/error announcements.
+
+Linux download policy currently depends on the first-registered `decide-destination` handler winning in Wry 0.57.1 / Tauri 2.12.5. A first-created, blank, unprivileged context owner keeps that handler valid after user windows close. This is a library implementation dependency, not a promised public API: recheck ordering and run the native refusal/authenticated/blob/close-then-download scenarios when upgrading Wry, Tauri or WebKitGTK. Current Linux evidence covers WebKitGTK 2.54.2 and Ubuntu 24.04's 2.52.6, not every engine release.
 
 ## Known gaps — do not call this full Desktop parity
 

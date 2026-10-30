@@ -5,7 +5,11 @@ import { once } from 'node:events';
 
 export async function targets(base = 'http://127.0.0.1:19222') {
   const html = await (await fetch(base)).text();
-  return [...html.matchAll(/\/socket\/(\d+)\/(\d+)\/WebPage/g)].map(match => `${base.replace('http', 'ws')}${match[0]}`);
+  // A newly created/blank context can be listed before it has a JavaScript execution context.
+  // Attaching then does not make Runtime.evaluate usable. Select loaded documents by URL, not title.
+  const loaded = html.replace(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi, row =>
+    /class=["']targeturl["']>\s*(?:about:blank)?\s*<\/div>/i.test(row) ? '' : row);
+  return [...loaded.matchAll(/\/socket\/(\d+)\/(\d+)\/WebPage/g)].map(match => `${base.replace('http', 'ws')}${match[0]}`);
 }
 
 // Discovery revisits pages. Retain their exclusive connections instead of racing backend detach.
