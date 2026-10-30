@@ -8,6 +8,25 @@ export async function targets(base = 'http://127.0.0.1:19222') {
   return [...html.matchAll(/\/socket\/(\d+)\/(\d+)\/WebPage/g)].map(match => `${base.replace('http', 'ws')}${match[0]}`);
 }
 
+// Discovery revisits pages. Retain their exclusive connections instead of racing backend detach.
+export function createInspectorSession() {
+  const pages = new Map();
+  let closed = false;
+  return {
+    inspect(target) {
+      if (closed) return Promise.reject(new Error('Inspector session closed'));
+      if (!pages.has(target)) pages.set(target, inspect(target));
+      return pages.get(target);
+    },
+    async close() {
+      closed = true;
+      const opened = await Promise.allSettled(pages.values());
+      await Promise.all(opened.filter(result => result.status === 'fulfilled').map(result => result.value.close()));
+      pages.clear();
+    },
+  };
+}
+
 export async function inspect(target) {
   const socket = new WebSocket(target);
   let sequence = 0;

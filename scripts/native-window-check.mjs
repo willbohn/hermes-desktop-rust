@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inspect, targets } from './webkit-inspector.mjs';
+import { createInspectorSession, targets } from './webkit-inspector.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const binary = resolve(process.argv[2] ?? join(root, 'target/debug/hermes-desktop-rust'));
@@ -26,6 +26,7 @@ let downloads = 0;
 let popups = 0;
 let nativeDiagnostics = '';
 const checks = [];
+const inspection = createInspectorSession();
 // Exercise the real pinned upstream helper, not a look-alike implementation.
 const downloadHelper = stripTypeScriptTypes(await readFile(join(root, 'upstream/hermes-agent/apps/desktop/src/lib/download.ts'), 'utf8'));
 const fixtureHandler = (request, response) => {
@@ -143,12 +144,11 @@ try {
     let pages;
     try { pages = await targets(inspector); } catch { return false; }
     for (const target of pages) {
-      const candidate = await inspect(target);
+      const candidate = await inspection.inspect(target);
       if (await candidate.evaluate(`location.origin === ${JSON.stringify(origin)}`)) {
         page = candidate;
         return true;
       }
-      await candidate.close();
     }
     return false;
   });
@@ -232,29 +232,25 @@ try {
   checks.push('closing the connection launcher does not strand active workspaces');
 
   // Use the ordinary bundled connection form to open a fresh origin, not a native grant backdoor.
-  await page.close();
-  page = null; // WebKit permits only one inspector connection per target.
+  page = null; // The inspection session retains existing page connections until teardown.
   let launcher;
   for (const target of await targets(inspector)) {
-    const candidate = await inspect(target);
+    const candidate = await inspection.inspect(target);
     if (await candidate.evaluate("Boolean(document.querySelector('#remote-form'))")) {
       launcher = candidate;
       break;
     }
-    await candidate.close();
   }
   assert.ok(launcher);
   await launcher.evaluate(`document.querySelector('#remote-details').open=true; document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
   key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
-  await launcher.close();
   await until('second notification workspace', async () => {
     for (const target of await targets(inspector)) {
-      const candidate = await inspect(target);
+      const candidate = await inspection.inspect(target);
       if (await candidate.evaluate(`location.origin === ${JSON.stringify(alternateOrigin)}`)) {
         page = candidate;
         return true;
       }
-      await candidate.close();
     }
     return false;
   });
@@ -424,5 +420,5 @@ try {
   await new Promise(resolve => fixture.close(resolve));
   await new Promise(resolve => alternateFixture.close(resolve));
   await rm(temporary, { recursive: true, force: true });
-  await page?.close();
+  await inspection.close();
 }
