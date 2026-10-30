@@ -69,6 +69,26 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
             &quit,
         ],
     )?;
+    #[cfg(target_os = "linux")]
+    workspace.insert_items(
+        &[
+            &MenuItem::with_id(
+                handle,
+                "notifications",
+                "Allow notifications in this window…",
+                true,
+                Some("CmdOrCtrl+Alt+N"),
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "disable-notifications",
+                "Stop new notifications",
+                true,
+                Some("CmdOrCtrl+Alt+M"),
+            )?,
+        ],
+        4,
+    )?;
     let edit = Submenu::with_items(
         handle,
         "Edit",
@@ -105,6 +125,18 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
                 }
             }
             "downloads" => windows::choose_download_folder(app),
+            #[cfg(target_os = "linux")]
+            "notifications" => {
+                if let Some(window) = focused {
+                    super::notifications::choose(&window);
+                }
+            }
+            #[cfg(target_os = "linux")]
+            "disable-notifications" => {
+                if let Ok(mut consent) = app.state::<HostState>().notifications.lock() {
+                    consent.revoke();
+                }
+            }
             "disable-downloads" => {
                 if let Ok(mut consent) = app.state::<HostState>().downloads.lock() {
                     consent.revoke();

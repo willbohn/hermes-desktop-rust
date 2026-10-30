@@ -1,8 +1,12 @@
 //! The only privileged renderer is the bundled connection launcher.
 mod menu;
+#[cfg(target_os = "linux")]
+mod notifications;
 mod windows;
 
 use clap::Parser;
+#[cfg(target_os = "linux")]
+use hermes_desktop_rust::notifications::NotificationConsent;
 use hermes_desktop_rust::{
     downloads::DownloadConsent,
     launch::{self, LocalOptions},
@@ -50,6 +54,8 @@ pub struct HostState {
     zoom: StdMutex<HashMap<String, f64>>,
     /// Explicit native-menu consent, scoped to this app session; never granted by a hosted page.
     downloads: StdMutex<DownloadConsent>,
+    #[cfg(target_os = "linux")]
+    notifications: StdMutex<NotificationConsent>,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,6 +204,8 @@ pub fn run() -> Result<(), &'static str> {
             counter: AtomicUsize::new(1),
             zoom: StdMutex::new(HashMap::new()),
             downloads: StdMutex::new(DownloadConsent::default()),
+            #[cfg(target_os = "linux")]
+            notifications: StdMutex::new(NotificationConsent::default()),
         })
         .plugin(tauri_plugin_dialog::init())
         // No injected link handler: external links must pass through the native confirmation in
@@ -224,20 +232,29 @@ pub fn run() -> Result<(), &'static str> {
         ])
         .setup(|app| {
             menu::install(app)?;
+            #[cfg(target_os = "linux")]
+            notifications::initialize(app.handle())?;
             // The launcher must install a download handler too. wry registers a download handler on
             // the app's shared web context for every webview and its built-in default is permissive,
             // so a launcher without one would allow downloads for the whole app.
             let launcher_download_app = app.handle().clone();
-            WebviewWindowBuilder::new(app, "launcher", WebviewUrl::App("index.html".into()))
-                .title("Hermes Desktop Rust — Connect")
-                .inner_size(650.0, 730.0)
-                .min_inner_size(400.0, 520.0)
-                .center()
-                .on_navigation(|url| is_launcher("launcher", url))
-                .on_download(move |_webview, event| {
-                    windows::handle_download(&launcher_download_app, event)
-                })
-                .build()?;
+            let launcher =
+                WebviewWindowBuilder::new(app, "launcher", WebviewUrl::App("index.html".into()))
+                    .title("Hermes Desktop Rust — Connect")
+                    .inner_size(650.0, 730.0)
+                    .min_inner_size(400.0, 520.0)
+                    .center()
+                    .on_navigation(|url| is_launcher("launcher", url))
+                    .on_download(move |_webview, event| {
+                        windows::handle_download(&launcher_download_app, event)
+                    })
+                    .build()?;
+            // The launcher explicitly denies page notifications and shares the worker restriction.
+            #[cfg(target_os = "linux")]
+            notifications::install_denied(&launcher)?;
+            // Notification policy is Linux-only; the handle is otherwise unused on other targets.
+            #[cfg(not(target_os = "linux"))]
+            let _ = launcher;
             Ok(())
         })
         .on_window_event(|window, event| {

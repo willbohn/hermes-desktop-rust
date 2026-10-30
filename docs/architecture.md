@@ -47,6 +47,19 @@ Local launch attaches through `hermes webapp --no-open --skip-build`. The CLI ow
 
 A shell swap is not evidence of faster React rendering. Existing transcript scheduling/virtualization stays intact; renderer issues need renderer fixes and measurements. No automatic update feed, cloud service, telemetry or parallel extension framework is added.
 
+## Linux notification boundary
+
+```mermaid
+flowchart LR
+  P[Page Notification API] -->|engine signal| C[Native consent and current grant]
+  C -->|approved text only| A[Separate GIO connection]
+  A -->|unique daemon owner| OS[OS notification service]
+  W[Unattributed engine and worker notifications] --> S[Shared GIO connection]
+  S -->|notification mutations blocked| G[App-session outgoing guard]
+```
+
+The guard is installed before webviews; shared-bus loss fails closed. Every page still receives its native permission/delivery handlers, with explicit denial on the launcher. No workspace IPC or browser-permission polyfill is added. This is an engine-integration boundary, not a sandbox against other processes under the same OS user. [Native evidence and limitations](notification-verification.md) describe the dependency on WebKit's shared GIO backend.
+
 ## Upstream route
 
 Discuss a native-host migration with maintainers before proposing it as a replacement. Small accessibility fixes can be reviewed independently. This standalone repository preserves upstream attribution and avoids assuming that an independent product belongs in the core tree. No endorsement or likelihood-of-acceptance claim is made.

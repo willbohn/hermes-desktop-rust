@@ -60,7 +60,7 @@ Keep launch-ticket URLs out of arguments, logs and screenshots. Local launch obt
 
 ## Develop and test
 
-Linux's native behavior test also needs **Xvfb, xdotool, D-Bus, and openbox** (an existing kwin_x11 works too). It runs on a separate display with a private bus and disposable home; it does not drive your desktop. See [download/window evidence](docs/download-verification.md).
+Linux's native behavior test also needs **Xvfb, xdotool, D-Bus with `gdbus`, and openbox** (an existing kwin_x11 works too). It runs on a separate display with a private bus and disposable home; it does not drive your desktop. See [download/window evidence](docs/download-verification.md).
 
 ```sh
 cargo fmt --all -- --check
@@ -80,6 +80,8 @@ node scripts/build-renderer.mjs --test
 Downloads require **Workspace → Choose download folder…** (Ctrl/Cmd+Shift+D). This permits downloads from all workspaces into that folder for this app session; use **Stop allowing new downloads** to revoke new transfers. If the first attempt was blocked, choose a folder and retry the export. Authentication and blob data stay in the original webview, not an external browser.
 
 That revoke action also resets a stuck consent prompt; old dialogs cannot restore permission afterward. **Connect or recover…** (Ctrl/Cmd+Shift+O) remains available after closing the connection launcher while a workspace is open. Ctrl/Cmd+W closes the focused window; Ctrl/Cmd+Q explicitly quits the host, not the shared gateway.
+
+Linux completion notifications use **Workspace → Allow notifications in this window…** (Ctrl+Alt+N). Consent covers that window's content, including embedded pages, for this app session. **Stop new notifications** (Ctrl+Alt+M) revokes host delivery across workspaces without rewriting the browser's permission state. A browser-level refusal requires quitting and reopening the app before requesting again; sign-in data is not cleared. Persistent/service-worker OS notifications are deliberately suppressed because WebKit cannot attribute them to a consented window. See [notification behavior and limits](docs/notification-verification.md).
 
 Only the bundled connection launcher has native IPC permission. Hosted workspace windows do not gain Tauri filesystem or shell access; their existing authenticated gateway and plugin trust model still applies. See [SECURITY.md](SECURITY.md).
 

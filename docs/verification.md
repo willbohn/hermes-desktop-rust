@@ -21,6 +21,7 @@ A later live view displayed **Backend ready**, with no visible wake overlay. The
 - Export patch: regression observed failing before the fix; 8 export/download tests in 2 files passed afterward. ESLint, project TypeScript and formatting checks passed.
 - Accessibility patch: affected upstream suites and source checks are recorded in [a11y verification](a11y-verification.md).
 - The [native window test](download-verification.md) checks real engine/permission behavior using labelled HTTP/blob fixtures. It is separate from the real Hermes inference above.
+- Linux [notification checks](notification-verification.md) exercise native consent, concurrent requests, actual private-bus delivery, clicks/close, daemon replacement, revocation and both persistent entry points. The owner-replacement regression was observed failing before the fix; the native gate runs fail-fast, not retry-until-green.
 - The combined patched renderer build and affected upstream suites passed via `node scripts/build-renderer.mjs --test`. Existing upstream ineffective-dynamic-import warnings remain.
 - The optimized Linux host built with `cargo build --locked --release` and its actual binary successfully executed `--help`. The GUI evidence is from the debug host; this does not claim a signed/distributed release.
 - Consent recovery, stale callback rejection, connection-launcher close/reopen, and explicit quit passed after observed regression failures. The final full Rust suite, Node/Python checks and release rebuild passed afterward.

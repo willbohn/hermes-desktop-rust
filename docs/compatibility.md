@@ -22,6 +22,7 @@ Baseline: `f2cc013158ce4b89f50154c09486a885835133b9` (2026-10-29). **Reuse is no
 - Native windows and menus; reachable connection/reload recovery even when the renderer fails.
 - Window size/position restoration; browser drag-and-drop remains enabled.
 - Native folder consent for downloads, retaining authenticated requests and blob exports; actual Linux engine/permission tests pass.
+- Linux page/completion notifications with native per-window session consent, bounded text, click/close handling and revocation; no renderer or plugin SDK replacement. See [notification evidence](notification-verification.md).
 - HTTPS/loopback address validation and origin-aware native chrome.
 - A local launcher that follows system light/dark and reduced-motion preferences, uses real form labels, keyboard focus indicators and live progress/error announcements.
 
@@ -33,7 +34,8 @@ Baseline: `f2cc013158ce4b89f50154c09486a885835133b9` (2026-10-29). **Reuse is no
 | Native SSH connection management and remote install | Not ported; use an already configured HTTPS Webapp. No silent retry loop or experimental SSH implementation. |
 | Cloud-manager partitions and desktop-specific OAuth brokers | Upstream browser-compatible sign-in only; no compatibility promise for Electron-specific flows. |
 | Global hotkeys, HUD/floating overlay, tray/minimize-to-tray, screenshots, OS-specific workspace transfer | Not ported. Keyboard shortcuts inside the app are not global shortcuts. |
-| Native dictation/audio capture, desktop notifications | Browser/system-webview support varies; native permission UX and codecs need per-platform verification. Do not infer support from Electron. |
+| Native dictation/audio capture; Windows/macOS notifications | Browser/system-webview support varies; native permission UX and codecs need per-platform verification. Do not infer support from Electron. |
+| Persistent/service-worker OS notifications on Linux | Suppressed even when page notifications are allowed: the engine supplies no consented-window attribution. Service workers and their browser APIs remain available. |
 | Local folders attached to a remote gateway | Not implemented as a folder-staging pipeline. A local path is not a remote attachment. Use explicit file uploads or an archive. |
 | Auto-update, signed/notarized installers | Not implemented. Deliberate source/binary updates only; no unsigned update feed. |
 | Windows/macOS releases | Source targets, not verified production support. A Linux launch is not evidence of these platforms working. |

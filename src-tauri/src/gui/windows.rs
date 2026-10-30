@@ -36,10 +36,10 @@ pub fn open_workspace(
     let page_app = app.clone();
     let download_app = app.clone();
     let zoom_app = app.clone();
-    // A popup window starts at `about:blank`; the engine then navigates the webview it hands back
-    // to the requested URL. This follows Tauri's documented handoff; a duplicate fetch was not
-    // reproduced on WebKitGTK. A top-level window has no handoff and loads the target directly.
-    let initial = match features.is_some() {
+    // Popups use the engine's handoff. Linux also secures a blank top-level view before
+    // navigating: untrusted content must not race installation of native notification handlers.
+    let is_popup = features.is_some();
+    let initial = match is_popup || cfg!(target_os = "linux") {
         true => WebviewUrl::External(Url::parse("about:blank").expect("about:blank is a URL")),
         false => WebviewUrl::External(target.clone()),
     };
@@ -52,6 +52,7 @@ pub fn open_workspace(
         .on_page_load(move |window, payload| {
             let _ = window.set_title(&window_title(payload.url()));
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                && payload.url().as_str() != "about:blank"
                 && let Some(launcher) = page_app.get_webview_window("launcher")
             {
                 let _ = launcher.hide();
@@ -84,7 +85,24 @@ pub fn open_workspace(
     let window = builder
         .build()
         .map_err(|_| "The system webview could not create a window")?;
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(error) = super::notifications::install(&window) {
+            let _ = window.close();
+            return Err(error);
+        }
+        if !is_popup && window.navigate(target).is_err() {
+            let _ = window.close();
+            return Err("The workspace could not be navigated after securing its webview");
+        }
+    }
     window.on_window_event(move |event| {
+        #[cfg(target_os = "linux")]
+        if matches!(event, tauri::WindowEvent::Destroyed)
+            && let Ok(mut consent) = zoom_app.state::<HostState>().notifications.lock()
+        {
+            consent.forget(&cleanup_label);
+        }
         if matches!(event, tauri::WindowEvent::Destroyed)
             && let Some(state) = zoom_app.try_state::<HostState>()
             && let Ok(mut zoom) = state.zoom.lock()

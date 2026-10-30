@@ -10,7 +10,7 @@ rust-version = "1.90"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-window-state", "dep:tauri-plugin-dialog", "dep:tauri-plugin-opener"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-window-state", "dep:tauri-plugin-dialog", "dep:tauri-plugin-opener", "dep:webkit2gtk", "dep:jsc"]
 
 [[bin]]
 name = "hermes-desktop-rust"
@@ -31,6 +31,11 @@ tauri = { version = "2.12", optional = true, features = [] }
 tauri-plugin-window-state = { version = "2.5", optional = true }
 tauri-plugin-dialog = { version = "2.8", optional = true }
 tauri-plugin-opener = { version = "2.7", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Use the webview engine already linked by Tauri; no hosted-page IPC or notification plugin.
+webkit2gtk = { version = "2.0", features = ["v2_40"], optional = true }
+jsc = { package = "javascriptcore-rs", version = "1.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
