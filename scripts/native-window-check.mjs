@@ -24,6 +24,7 @@ let replacementFixture;
 let page;
 let pageAddress;
 let launcher;
+let lastInput;
 let downloads = 0;
 let popups = 0;
 let nativeDiagnostics = '';
@@ -130,6 +131,7 @@ function windowNamed(name) {
   catch (error) { if (error.status === 1) return null; throw error; }
 }
 function key(window, keys) {
+  lastInput = { window, keys };
   xdo('windowfocus', '--sync', window);
   xdo('key', '--clearmodifiers', keys);
 }
@@ -556,6 +558,8 @@ try {
   console.log(JSON.stringify({ passed: checks.length, checks }));
 } catch (error) {
   console.error(error.message);
+  try { console.error('Native input target:', { ...lastInput, focused: xdo('getwindowfocus'), active: xdo('getactivewindow') }); }
+  catch { console.error('Native input target unavailable'); }
   // Only this bundled fixture launcher is inspected; never dump hosted content, input values or URLs.
   if (launcher) console.error('Fixture launcher state:', await launcher.evaluate(`({
     before:window.fixtureLauncherBefore,events:window.fixtureLauncherEvents,

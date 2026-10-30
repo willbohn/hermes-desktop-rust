@@ -8,7 +8,7 @@ The host now handles the existing renderer's microphone requests through WebKit.
 - Consent covers content in that workspace, including embedded pages. The prompt names the top-level website, not an inferred requesting frame. Recording can continue in the background.
 - WebKit owns its cached grant. This preserves upstream's permission probe, track stop, and separate recording request without a duplicate host prompt.
 - **Close the workspace to end its microphone access** (Ctrl+W). A different window, including one reopened at the same website, needs its own consent. Closing a workspace does not stop the Hermes gateway.
-- Refusing the dialog denies the request. A dialog left open across replacement of the requesting document cannot grant the replacement document access.
+- Refusing the dialog denies the request. A dialog left open across replacement of the top-level document cannot grant the replacement document access.
 - Camera, combined camera/microphone and screen capture are not authorized by this microphone prompt. The bundled launcher cannot acquire microphone access.
 
 There is deliberately no host “Stop and revoke” toggle. In WebKitGTK 2.54.2, stopping active capture clears grants, but the public setter returns early when capture is already idle. A real isolated probe also showed that disabling media streams does not stop a retained `getUserMedia` function from reacquiring an idle cached grant. Hiding an API is not revocation; closing the workspace is the tested boundary. Cookies and sign-in data are not cleared.
@@ -38,6 +38,8 @@ The new consent regression first failed because capture immediately returned `No
 - Closing a workspace with a live mock track, observing its inspectable page disappear, and a fresh same-origin window requiring consent again. Another window's denial does not end the already-consented window's track.
 
 The hidden Linux `--test-mock-media` option substitutes WebKit's synthetic devices only. It does **not** grant permission. The normal default uses system devices. The test runs the actual host on a private display/bus with disposable HOME/XDG and unreachable Pulse/PipeWire endpoints; it never starts Hermes or opens the user's microphone.
+
+A separate rootless Ubuntu 24.04 run with WebKitGTK 2.52.6 also passed all 19 checks, encoding MP4/AAC through the existing MIME fallback. Before installing `gstreamer1.0-plugins-bad`, recording failed with `NotSupportedError` and no supported candidate MIME type. That package supplies the `voaacenc` encoder; `gstreamer1.0-plugins-good` supplies other required media components. Both are explicit Ubuntu prerequisites. This container result does not clear the separate CI launcher-keyboard failure.
 
 ## Limits
 

@@ -21,6 +21,8 @@ See [architecture](docs/architecture.md), [community reports](docs/community-fee
 
 Requirements: current stable Rust, Git, Node.js 26, and a compatible installed Hermes CLI. Native prerequisites follow [Tauri's platform guide](https://v2.tauri.app/start/prerequisites/): Linux needs GTK3 and WebKitGTK 4.1 development libraries; Windows needs the MSVC toolchain and WebView2; macOS needs Xcode command-line tools.
 
+Linux recording also needs GStreamer encoders. On Ubuntu 24.04, include `gstreamer1.0-plugins-good` and `gstreamer1.0-plugins-bad`; WebKit alone is not sufficient. The native test verifies real recording rather than treating permission as proof that a codec is available.
+
 ```sh
 git clone --recurse-submodules --branch feat/rust-desktop https://github.com/willbohn/hermes-desktop-rust.git
 cd hermes-desktop-rust

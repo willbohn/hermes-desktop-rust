@@ -17,4 +17,8 @@
 - Preserve session-export blob lifetime through the existing upstream download helper.
 - Add actual Linux WebKit boundary/download/popup checks, an SDK smoke fixture, isolated runtime tooling, and cross-platform CI targets.
 
+### Fixed
+
+- Include Ubuntu's GStreamer recording prerequisites; native WebKit tests exercise both local WebM/Opus and Ubuntu MP4/AAC encoding instead of accepting permission-only success.
+
 Full Electron-native feature parity, signed installers, automatic updates, cross-platform runtime validation and upstream acceptance remain unverified or unimplemented. See `docs/compatibility.md`.
