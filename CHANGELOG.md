@@ -20,5 +20,6 @@
 ### Fixed
 
 - Include Ubuntu's GStreamer recording prerequisites; native WebKit tests exercise both local WebM/Opus and Ubuntu MP4/AAC encoding instead of accepting permission-only success.
+- Restore keyboard input when reopening the connection launcher by focusing its embedded webview as well as its native window.
 
 Full Electron-native feature parity, signed installers, automatic updates, cross-platform runtime validation and upstream acceptance remain unverified or unimplemented. See `docs/compatibility.md`.

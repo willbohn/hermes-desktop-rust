@@ -28,6 +28,14 @@ A later live view displayed **Backend ready**, with no visible wake overlay. The
 - The optimized Linux host built with `cargo build --locked --release` and its actual binary successfully executed `--help`. The GUI evidence is from the debug host; this does not claim a signed/distributed release.
 - Consent recovery, stale callback rejection, connection-launcher close/reopen, and explicit quit passed after observed regression failures. The final full Rust suite, Node/Python checks and release rebuild passed afterward.
 
+## Microphone and recovery CI checkpoint
+
+[Verify run 41046540862](https://github.com/willbohn/hermes-desktop-rust/actions/runs/41046540862) passed all four jobs at `a930f671ad68f7430fadec4852f1338ce0735abb`: Ubuntu native behavior, Windows/macOS host checks and the patched renderer suites/build. The native scenario contains 19 checks, including the microphone boundaries above. Local WebKitGTK 2.54.2 recorded WebM/Opus; a separate Ubuntu 24.04/WebKitGTK 2.52.6 run recorded MP4/AAC.
+
+Earlier microphone-era CI runs failed before reaching capture: the reopened launcher had a focused DOM button and an active native window, but received no keyboard activation. Explicitly focusing the embedded webview as well as the window fixed the existing regression. The keyboard test was not replaced with a scripted form submission, delayed retry or skipped assertion. Ubuntu's missing recording codecs were diagnosed separately in an isolated container and added as explicit prerequisites.
+
+Failure screenshots come only from the private fixture display; they do not capture the user's desktop. The test's labelled HTTP fixtures and synthetic media remain distinct from the real Hermes runtime execution above.
+
 ## Not established
 
 - Complete native bridge parity: see [compatibility](compatibility.md).
