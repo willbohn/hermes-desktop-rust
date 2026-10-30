@@ -23,6 +23,7 @@ let child;
 let replacementFixture;
 let page;
 let pageAddress;
+let launcher;
 let downloads = 0;
 let popups = 0;
 let nativeDiagnostics = '';
@@ -285,7 +286,6 @@ try {
 
   // Use the ordinary bundled connection form to open a fresh origin, not a native grant backdoor.
   page = null; // The inspection session retains existing page connections until teardown.
-  let launcher;
   for (const target of await targets(inspector)) {
     const candidate = await inspection.inspect(target);
     if (await candidate.evaluate("Boolean(document.querySelector('#remote-form'))")) {
@@ -294,7 +294,17 @@ try {
     }
   }
   assert.ok(launcher);
-  await launcher.evaluate(`document.querySelector('#remote-details').open=true; document.querySelector('#url').value=${JSON.stringify(alternateOrigin)}; document.querySelector('#remote-form button').focus(); true`);
+  await launcher.evaluate(`
+    window.fixtureLauncherEvents=[];
+    for (const name of ['keydown','click','submit','focusin']) document.addEventListener(name,event=>{
+      fixtureLauncherEvents.push({type:event.type,tag:event.target.tagName,id:event.target.id,disabled:event.target.disabled});
+    },true);
+    window.fixtureLauncherBefore={focus:document.hasFocus(),busy:document.querySelector('#feedback').getAttribute('aria-busy')};
+    document.querySelector('#remote-details').open=true;
+    document.querySelector('#url').value=${JSON.stringify(alternateOrigin)};
+    document.querySelector('#remote-form button').focus();
+    fixtureLauncherBefore.buttonFocused=document.activeElement===document.querySelector('#remote-form button');
+    fixtureLauncherBefore.buttonDisabled=document.querySelector('#remote-form button').disabled; true`);
   key(windowNamed('Hermes Desktop Rust.*Connect'), 'Return');
   await until('second notification workspace', async () => {
     for (const target of await targets(inspector)) {
@@ -546,6 +556,13 @@ try {
   console.log(JSON.stringify({ passed: checks.length, checks }));
 } catch (error) {
   console.error(error.message);
+  // Only this bundled fixture launcher is inspected; never dump hosted content, input values or URLs.
+  if (launcher) console.error('Fixture launcher state:', await launcher.evaluate(`({
+    before:window.fixtureLauncherBefore,events:window.fixtureLauncherEvents,
+    focus:document.hasFocus(),activeTag:document.activeElement?.tagName,activeId:document.activeElement?.id,
+    busy:document.querySelector('#feedback').getAttribute('aria-busy'),
+    status:document.querySelector('#status').textContent,error:document.querySelector('#error').textContent
+  })`).catch(() => ({unavailable:true})));
   console.error('Completed native checks:', checks);
   console.error('Downloads in isolated folder:', await readdir(downloadDir));
   console.error('Isolated native diagnostics:', nativeDiagnostics);
